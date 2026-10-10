@@ -1,6 +1,5 @@
 import importlib
 import io
-import sqlite3
 import os
 import secrets
 from urllib.parse import urlencode, quote
@@ -15,31 +14,34 @@ from psycopg import sql
 
 
 @pytest.fixture
-def app_client(tmp_path, monkeypatch):
-    monkeypatch.setenv('DATABASE_URL', '')
-    monkeypatch.setenv('EDOCUMENTS_DB', str(tmp_path / 'documents.sqlite3'))
-    monkeypatch.setenv('EDOCUMENTS_STORAGE', 'sqlite')
-    main = importlib.import_module('backend.main')
-    monkeypatch.setattr(main, 'DATABASE_URL', '')
-    monkeypatch.setattr(main, 'DB_PATH', tmp_path / 'documents.sqlite3')
+def postgres_schema(monkeypatch):
     test_url = os.getenv('EDOCUMENTS_TEST_DATABASE_URL')
+    if not test_url:
+        pytest.fail('Set EDOCUMENTS_TEST_DATABASE_URL to an isolated PostgreSQL test database.')
     schema = 'test_' + secrets.token_hex(12)
-    if test_url:
-        with psycopg.connect(test_url, autocommit=True) as admin:
-            admin.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(schema)))
-        separator = '&' if '?' in test_url else '?'
-        monkeypatch.setenv('DATABASE_SCHEMA', schema)
-        monkeypatch.setattr(main, 'DATABASE_URL', test_url + separator + urlencode({'options': f'-c search_path={schema}'}, quote_via=quote))
+    with psycopg.connect(test_url, autocommit=True) as admin:
+        admin.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(schema)))
+    separator = '&' if '?' in test_url else '?'
+    url = test_url + separator + urlencode({'options': f'-c search_path={schema}'}, quote_via=quote)
+    monkeypatch.setenv('DATABASE_SCHEMA', schema)
+    monkeypatch.setenv('DATABASE_URL', url)
+    monkeypatch.setenv('EDOCUMENTS_STORAGE', 'database')
     try:
-        main.initialize()
-        with TestClient(main.app) as client:
-            response = client.post('/api/setup', json={'name': 'test-user', 'password': 'test-password-123'})
-            assert response.status_code == 201
-            yield main, client
+        yield url
     finally:
-        if test_url:
-            with psycopg.connect(test_url, autocommit=True) as admin:
-                admin.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(schema)))
+        with psycopg.connect(test_url, autocommit=True) as admin:
+            admin.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(schema)))
+
+
+@pytest.fixture
+def app_client(postgres_schema, monkeypatch):
+    main = importlib.import_module('backend.main')
+    monkeypatch.setattr(main, 'DATABASE_URL', postgres_schema)
+    main.initialize()
+    with TestClient(main.app) as client:
+        response = client.post('/api/setup', json={'name': 'test-user', 'password': 'test-password-123'})
+        assert response.status_code == 201
+        yield main, client
 
 
 @pytest.fixture
@@ -108,11 +110,8 @@ def test_failed_database_write_cleans_uploaded_object(s3, monkeypatch):
     stub.add_response('put_object', {}, put_params(b'hello'))
     stub.add_response('delete_object', {}, {'Bucket': 'private-test-bucket', 'Key': ANY})
     with main.db() as con:
-        if con.postgres:
-            con.execute("CREATE FUNCTION fail_upload() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test failure' USING ERRCODE='23514'; END $$")
-            con.execute('CREATE TRIGGER fail_upload BEFORE INSERT ON documents FOR EACH ROW EXECUTE FUNCTION fail_upload()')
-        else:
-            con.execute("CREATE TRIGGER fail_upload BEFORE INSERT ON documents BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+        con.execute("CREATE FUNCTION fail_upload() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test failure' USING ERRCODE='23514'; END $$")
+        con.execute('CREATE TRIGGER fail_upload BEFORE INSERT ON documents FOR EACH ROW EXECUTE FUNCTION fail_upload()')
     with pytest.raises(main.database.IntegrityError):
         client.post('/api/files', files={'file': ('plik.txt', b'hello')})
 
@@ -124,7 +123,7 @@ def test_missing_bucket_fails_closed(s3, monkeypatch):
     assert client.get('/api/documents').json() == []
 
 
-def test_legacy_sqlite_files_remain_available(s3):
+def test_database_files_remain_available_with_s3_enabled(s3):
     main, client, stub = s3
     doc = client.post('/api/documents', json={'title': 'Legacy'}).json()
     with main.db() as con:

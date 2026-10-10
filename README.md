@@ -9,8 +9,8 @@ otwiera wybór motywu: normalny, słodki, ciemny i kolorowy. Wybór jest
 zapamiętywany w tej przeglądarce.
 
 GitHub Actions automatycznie testuje projekt, buduje frontend oraz obraz Docker
-po zmianach na `main`. Testy backendu działają na izolowanych bazach SQLite
-i PostgreSQL. Po udanych testach oraz sprawdzeniu kontenera obraz trafia do
+po zmianach na `main`. Testy backendu działają na izolowanej bazie PostgreSQL.
+Po udanych testach oraz sprawdzeniu kontenera obraz trafia do
 `ghcr.io/mdriverpl/skopiujto:latest`; dostępny jest też tag z pełnym SHA commita.
 Build frontendu można pobrać jako artefakt `frontend-dist` w zakładce
 [Actions](https://github.com/mdriverpl/skopiujto/actions).
@@ -293,7 +293,7 @@ Historia autora pokazuje odbiorcę, status i datę akceptacji; odświeża się c
 Przy pliku widoczna jest liczba akceptacji jego obecnej wersji.
 
 Wysyłka zachowuje osobną kopię przesłanej wersji w skonfigurowanym magazynie
-(S3 lub SQLite). Zmiana oryginału nie zmienia załącznika ani pliku z linku.
+(S3 lub PostgreSQL). Zmiana oryginału nie zmienia załącznika ani pliku z linku.
 Akceptacja wcześniejszej wersji pozostaje w historii i nie oznacza akceptacji
 nowszej wersji. Autor może cofnąć oczekujący link. Usunięcie pliku usuwa
 historię i kopie wysyłek oraz wyłącza linki; cofnięcie linku nie usuwa

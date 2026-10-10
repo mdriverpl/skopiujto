@@ -39,10 +39,6 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        database: [sqlite, postgres]
     services:
       postgres:
         image: postgres:16-alpine
@@ -59,8 +55,8 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: ''
-      EDOCUMENTS_STORAGE: sqlite
-      EDOCUMENTS_TEST_DATABASE_URL: ${{ matrix.database == 'postgres' && 'postgresql://ci:ci-test-only@127.0.0.1:5432/edokumenty_test' || '' }}
+      EDOCUMENTS_STORAGE: database
+      EDOCUMENTS_TEST_DATABASE_URL: postgresql://ci:ci-test-only@127.0.0.1:5432/edokumenty_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -77,6 +73,20 @@ jobs:
     needs: [frontend, backend]
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: edokumenty_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d edokumenty_smoke"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     permissions:
       contents: read
       packages: write
@@ -97,14 +107,14 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Check container startup, frontend and API
         run: |
-          docker run -d --name smoke -p 127.0.0.1:8080:8000 \
-            -e DATABASE_URL= -e EDOCUMENTS_STORAGE=sqlite \
-            -e EDOCUMENTS_DB=/app/data/smoke.sqlite3 \
+          docker run -d --name smoke --network host \
+            -e DATABASE_URL=postgresql://ci:ci-test-only@127.0.0.1:5432/edokumenty_smoke \
+            -e EDOCUMENTS_STORAGE=database \
             ghcr.io/mdriverpl/skopiujto:${{ github.sha }}
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:8080/api/health; then
-              curl --fail --silent http://127.0.0.1:8080/ | grep -q '<html'
-              curl --fail --silent http://127.0.0.1:8080/api/openapi.json > /dev/null
+            if curl --fail --silent http://127.0.0.1:8000/api/health; then
+              curl --fail --silent http://127.0.0.1:8000/ | grep -q '<html'
+              curl --fail --silent http://127.0.0.1:8000/api/openapi.json > /dev/null
               exit 0
             fi
             sleep 2

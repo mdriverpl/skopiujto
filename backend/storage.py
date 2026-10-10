@@ -12,7 +12,7 @@ from fastapi import HTTPException
 logger = logging.getLogger(__name__)
 
 def enabled():
-    return os.getenv('EDOCUMENTS_STORAGE', 'sqlite') == 's3'
+    return os.getenv('EDOCUMENTS_STORAGE', 'database') == 's3'
 
 @lru_cache(maxsize=1)
 def client():

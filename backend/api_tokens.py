@@ -10,7 +10,7 @@ SCHEMA = '''
 CREATE TABLE IF NOT EXISTS api_access_tokens(
  id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  name TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,scope TEXT NOT NULL,
- created_at TEXT NOT NULL,expires REAL NOT NULL);
+ created_at TEXT NOT NULL,expires DOUBLE PRECISION NOT NULL);
 CREATE INDEX IF NOT EXISTS api_token_owner ON api_access_tokens(user_id);
 '''
 

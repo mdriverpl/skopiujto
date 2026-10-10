@@ -14,7 +14,7 @@ from backend import ai, mailer, sms
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS ai_command_jobs(
  id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),prompt TEXT NOT NULL,
- payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft',created_at TEXT NOT NULL,expires REAL NOT NULL);
+ payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft',created_at TEXT NOT NULL,expires DOUBLE PRECISION NOT NULL);
 CREATE INDEX IF NOT EXISTS command_job_owner ON ai_command_jobs(user_id);
 CREATE TABLE IF NOT EXISTS user_messages(
  id TEXT PRIMARY KEY,sender_id TEXT NOT NULL REFERENCES users(id),recipient_id TEXT NOT NULL REFERENCES users(id),

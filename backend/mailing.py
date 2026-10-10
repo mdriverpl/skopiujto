@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS file_mailings(
   id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
   sender_id TEXT NOT NULL REFERENCES users(id), sender_name TEXT NOT NULL,
   title TEXT NOT NULL, filename TEXT NOT NULL, version INTEGER NOT NULL, file_size INTEGER NOT NULL,
-  file BLOB, object_bucket TEXT, object_key TEXT, sha256 TEXT NOT NULL,
-  message TEXT NOT NULL, created_at TEXT NOT NULL, expires REAL NOT NULL);
+  file BYTEA, object_bucket TEXT, object_key TEXT, sha256 TEXT NOT NULL,
+  message TEXT NOT NULL, created_at TEXT NOT NULL, expires DOUBLE PRECISION NOT NULL);
 CREATE TABLE IF NOT EXISTS file_mail_recipients(
   id TEXT PRIMARY KEY, mailing_id TEXT NOT NULL REFERENCES file_mailings(id) ON DELETE CASCADE,
   email TEXT NOT NULL, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
@@ -72,9 +72,8 @@ def migrate(c):
         if name not in columns: c.execute(f'ALTER TABLE file_mail_recipients ADD COLUMN {name} {kind}')
     if 'position' not in columns:
         c.execute('ALTER TABLE file_mail_recipients ADD COLUMN position INTEGER NOT NULL DEFAULT 0')
-        order = 'id' if c.postgres else 'rowid'
-        c.execute(f'''WITH positions AS (
-            SELECT id,row_number() OVER (PARTITION BY mailing_id ORDER BY {order}) AS pos FROM file_mail_recipients)
+        c.execute('''WITH positions AS (
+            SELECT id,row_number() OVER (PARTITION BY mailing_id ORDER BY id) AS pos FROM file_mail_recipients)
             UPDATE file_mail_recipients SET position=(SELECT pos FROM positions WHERE positions.id=file_mail_recipients.id)''')
     c.execute('CREATE INDEX IF NOT EXISTS file_recipient_user ON file_mail_recipients(user_id,channel)')
 

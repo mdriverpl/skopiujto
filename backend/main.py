@@ -19,7 +19,6 @@ from backend import database, api_tokens
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / '.env')
-DB_PATH = Path(os.getenv('EDOCUMENTS_DB', str(ROOT / 'data' / 'documents.sqlite3')))
 DATABASE_URL = os.getenv('DATABASE_URL', '')
 SECURE_COOKIE = os.getenv('EDOCUMENTS_SECURE_COOKIE', '0') == '1'
 MAX_UPLOAD = 10 * 1024 * 1024
@@ -31,7 +30,7 @@ cookie_auth = APIKeyCookie(name='session', auto_error=False, scheme_name='Browse
 
 @contextmanager
 def db():
-    with database.connect(DATABASE_URL, DB_PATH) as con:
+    with database.connect(DATABASE_URL) as con:
         yield con
 
 def initialize():
@@ -43,16 +42,16 @@ def initialize():
         CREATE TABLE IF NOT EXISTS folders(id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
           name TEXT NOT NULL, parent_id TEXT REFERENCES folders(id) ON DELETE RESTRICT, created_at TEXT NOT NULL);
         CREATE UNIQUE INDEX IF NOT EXISTS folder_names ON folders(user_id,coalesce(parent_id,''),lower(name));
-        CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id), expires REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id), expires DOUBLE PRECISION NOT NULL);
         CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), title TEXT NOT NULL,
           category TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-          version INTEGER NOT NULL DEFAULT 1, filename TEXT, file BLOB);
+          version INTEGER NOT NULL DEFAULT 1, filename TEXT, file BYTEA);
         CREATE TABLE IF NOT EXISTS comments(id TEXT PRIMARY KEY, document_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
           author TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS deadlines(id TEXT PRIMARY KEY, document_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
           title TEXT NOT NULL, due_at TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS shares(id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, document_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
-          expires REAL NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+          expires DOUBLE PRECISION NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS templates(id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id), title TEXT NOT NULL,
           category TEXT NOT NULL, description TEXT NOT NULL, content TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS deleted_default_templates(id TEXT PRIMARY KEY);
@@ -88,8 +87,7 @@ def initialize():
             if name not in user_columns:
                 c.execute(f'ALTER TABLE users ADD COLUMN {name} {kind}')
         if 'role' not in user_columns:
-            order = 'id' if c.postgres else 'rowid'
-            c.execute(f"UPDATE users SET role='admin' WHERE id=(SELECT id FROM users ORDER BY {order} LIMIT 1)")
+            c.execute("UPDATE users SET role='admin' WHERE id=(SELECT id FROM users ORDER BY id LIMIT 1)")
         columns = c.columns('documents')
         for name, kind in [('object_key', 'TEXT'), ('object_bucket', 'TEXT'), ('file_size', 'INTEGER'),
                            ('folder_id', 'TEXT REFERENCES folders(id) ON DELETE RESTRICT'),

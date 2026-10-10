@@ -177,17 +177,15 @@ def test_role_changes_apply_without_new_login(app_client):
     client.patch(f"/api/admin/users/{reader['id']}", json={'role': 'user'})
     assert client.get('/api/admin/users', headers={'cookie': f'session={cookie}'}).status_code == 403
 
-def test_old_database_migration_preserves_files_and_promotes_first_account(app_client, tmp_path, monkeypatch):
+def test_old_database_migration_preserves_files_and_promotes_first_account(app_client):
     main, client = app_client
-    import sqlite3
-    legacy_path = tmp_path / 'legacy.sqlite3'
-    with sqlite3.connect(legacy_path) as con:
+    with main.db() as con:
+        con.execute(f'DROP SCHEMA "{con.schema}" CASCADE')
+        con.ensure_schema()
         con.execute('CREATE TABLE users(id TEXT PRIMARY KEY, name TEXT NOT NULL, password TEXT NOT NULL)')
         con.execute('INSERT INTO users VALUES(?,?,?)', ('legacy-owner', 'legacy', main.password_hash('legacy-password-123')))
-        con.execute('CREATE TABLE documents(id TEXT PRIMARY KEY,user_id TEXT,title TEXT,category TEXT,content TEXT,status TEXT,created_at TEXT,updated_at TEXT,version INTEGER,filename TEXT,file BLOB)')
+        con.execute('CREATE TABLE documents(id TEXT PRIMARY KEY,user_id TEXT,title TEXT,category TEXT,content TEXT,status TEXT,created_at TEXT,updated_at TEXT,version INTEGER,filename TEXT,file BYTEA)')
         con.execute('INSERT INTO documents VALUES(?,?,?,?,?,?,?,?,?,?,?)', ('legacy-file','legacy-owner','file.txt','Pliki','','Gotowy',main.now(),main.now(),1,'file.txt',b'legacy'))
-    monkeypatch.setattr(main, 'DB_PATH', legacy_path)
-    monkeypatch.setattr(main, 'DATABASE_URL', '')
     main.initialize()
     main.initialize()
     login(client, {'name': 'legacy', 'password': 'legacy-password-123'})

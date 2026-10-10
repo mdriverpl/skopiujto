@@ -166,14 +166,13 @@ def test_task_resource_validation_and_general_task(app_client):
     assert item['folder_id'] is None and item['document_id'] is None
 
 
-def test_legacy_task_schema_migrates_without_losing_tasks(tmp_path):
-    import sqlite3
-    from backend import tasks
-    with sqlite3.connect(tmp_path / 'legacy.sqlite') as con:
-        con.row_factory = sqlite3.Row
+def test_legacy_task_schema_migrates_without_losing_tasks(postgres_schema):
+    from backend import tasks, database
+    with database.connect(postgres_schema) as con:
         con.execute('CREATE TABLE users(id TEXT PRIMARY KEY)')
         con.execute('CREATE TABLE documents(id TEXT PRIMARY KEY)')
         con.execute('CREATE TABLE folders(id TEXT PRIMARY KEY)')
+        con.execute("INSERT INTO users VALUES('me')")
         con.executescript(tasks.SCHEMA.replace('folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL, ', ''))
         con.execute("INSERT INTO user_tasks(id,sender_id,assignee_id,title,description,kind,created_at,updated_at) VALUES('task','me','me','Legacy','','general','date','date')")
         tasks.initialize(con)

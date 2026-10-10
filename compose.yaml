@@ -8,9 +8,6 @@ services:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL:?Uzupełnij DATABASE_URL w .env}
-      EDOCUMENTS_DB: /app/data/documents.sqlite3
-    volumes:
-      - app_data:/app/data
     healthcheck:
       test:
         - CMD
@@ -21,6 +18,3 @@ services:
       timeout: 15s
       start_period: 60s
       retries: 3
-
-volumes:
-  app_data:

@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS survey_dispatches(
 CREATE TABLE IF NOT EXISTS survey_invites(
  id TEXT PRIMARY KEY,survey_id TEXT NOT NULL REFERENCES surveys(id),request_id TEXT NOT NULL,
  name TEXT NOT NULL,channel TEXT NOT NULL,address TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,
- expires REAL NOT NULL,status TEXT NOT NULL,reason TEXT NOT NULL DEFAULT '',sent_at TEXT,
+ expires DOUBLE PRECISION NOT NULL,status TEXT NOT NULL,reason TEXT NOT NULL DEFAULT '',sent_at TEXT,
  answers TEXT,submitted_at TEXT,UNIQUE(survey_id,channel,address));
 CREATE INDEX IF NOT EXISTS survey_invite_parent ON survey_invites(survey_id);
 '''

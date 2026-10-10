@@ -93,12 +93,11 @@ def test_schema_edit_checks_owner_mapping_duplicates_and_reserved_ai_name(app_cl
     login(client, ADMIN)
     assert client.get(path + '/entries').json()['dictionary']['version'] == 1
 
-def test_old_dictionary_schema_migrates_without_losing_data(tmp_path):
-    import sqlite3
-    from backend import dictionaries
-    with sqlite3.connect(tmp_path / 'old.sqlite') as con:
-        con.row_factory = sqlite3.Row
+def test_old_dictionary_schema_migrates_without_losing_data(postgres_schema):
+    from backend import dictionaries, database
+    with database.connect(postgres_schema) as con:
         con.executescript('CREATE TABLE users(id TEXT PRIMARY KEY);' + dictionaries.SCHEMA.replace(',version INTEGER NOT NULL DEFAULT 1);', ');', 1))
+        con.execute("INSERT INTO users VALUES('me')")
         con.execute("INSERT INTO dictionaries VALUES('one','me','Test','[\"A\"]','date')")
         dictionaries.initialize(con)
         dictionaries.initialize(con)
