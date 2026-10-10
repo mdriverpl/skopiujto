@@ -62,6 +62,58 @@ def test_generates_formatted_unsaved_draft(app_client, provider, kind):
     assert body['text']['format']['strict'] is True and body['input'] == 'Przygotuj umowę'
 
 
+SURVEY_DATA = {'title': 'Satysfakcja', 'description': 'Oceń obsługę', 'questions': [
+    {'label': 'Ocena', 'type': 'select', 'required': True, 'options': ['Dobra', 'Zła']},
+    {'label': 'Uwagi', 'type': 'textarea', 'required': False, 'options': []}]}
+
+
+def test_survey_generation_is_unsaved_and_can_be_created(app_client, provider):
+    _, client = app_client
+    calls, result = provider
+    result['json'] = output(SURVEY_DATA)
+    before = client.get('/api/surveys').json()
+    response = client.post('/api/ai/generate', json={'prompt': 'Ankieta satysfakcji', 'kind': 'survey'})
+    assert response.status_code == 200, response.text
+    draft = response.json()
+    assert draft['title'] == SURVEY_DATA['title']
+    assert draft['recipients'] == []
+    assert [q['id'] for q in draft['questions']] == ['q_1', 'q_2']
+    assert client.get('/api/surveys').json() == before
+    payload = json.loads(calls[0].content)
+    assert payload['text']['format']['name'] == 'survey_draft'
+    assert payload['store'] is False
+    saved = client.post('/api/surveys', json=draft)
+    assert saved.status_code == 201, saved.text
+    assert client.get('/api/surveys/' + saved.json()['id']).json()['questions'] == draft['questions']
+
+
+@pytest.mark.parametrize('questions', [[],
+    [{'label': 'Ocena', 'type': 'select', 'required': True, 'options': ['Tak', 'Tak']}],
+    [{'label': ' ', 'type': 'text', 'required': True, 'options': []}],
+    [{'label': 'Uwagi', 'type': 'textarea', 'required': False, 'options': ['Nie']}],
+    [{'label': 'Ocena', 'type': 'unsupported', 'required': True, 'options': []}]])
+def test_invalid_survey_generation_does_not_save(app_client, provider, questions):
+    _, client = app_client
+    _, result = provider
+    result['json'] = output({**SURVEY_DATA, 'questions': questions})
+    assert client.post('/api/ai/generate', json={'prompt': 'Ankieta', 'kind': 'survey'}).status_code == 502
+    assert client.get('/api/surveys').json() == []
+
+
+def test_survey_generation_uses_survey_permissions_and_requires_login(app_client, provider):
+    _, client = app_client
+    calls, result = provider
+    result['json'] = output(SURVEY_DATA)
+    create_reader(client)
+    login(client, READER)
+    assert client.post('/api/ai/generate', json={'prompt': 'Ankieta', 'kind': 'survey', 'folder_id': 'x'}).status_code == 422
+    assert calls == []
+    assert client.post('/api/ai/generate', json={'prompt': 'Ankieta', 'kind': 'survey'}).status_code == 200
+    client.post('/api/logout')
+    assert client.post('/api/ai/generate', json={'prompt': 'Ankieta', 'kind': 'survey'}).status_code == 401
+    assert len(calls) == 1
+
+
 def test_generation_obeys_folder_and_root_permissions(app_client, provider):
     _, client = app_client
     calls, _ = provider

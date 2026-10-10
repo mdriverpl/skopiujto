@@ -7,7 +7,7 @@ import { ref } from 'vue'
 const compiled = compileScript(parse(readFileSync(new URL('./SurveyPublic.vue', import.meta.url), 'utf8')).descriptor,
   { id: 'survey-public-test' }).content.replace(/^import .*$/gm, '').replace('export default', 'globalThis.component =')
 function panel(api) {
-  const context = { ref, onMounted() {} }
+  const context = { ref, SurveyScore: {}, onMounted() {} }
   runInNewContext(compiled, context)
   return context.component.setup({ api, token: 'private-token' }, { expose() {} })
 }
@@ -29,4 +29,12 @@ test('expired or closed invitations do not submit and server errors preserve typ
   state.survey.value = { closed_at: '2030-01-01' }; await state.submit()
   state.survey.value = {}; state.answers.value = { name: 'Anna' }; await state.submit()
   assert.equal(state.answers.value.name, 'Anna'); assert.equal(state.busy.value, false)
+})
+
+test('a participant receives their PHQ9 score immediately after submission', async () => {
+  const result = { total: 9, maximum: 27, severity: 'Łagodne nasilenie objawów', items: [] }
+  const state = panel(async () => ({ submitted_at: '2030-01-01', result }))
+  state.survey.value = { questions: [] }
+  await state.submit()
+  assert.equal(state.survey.value.result.total, 9)
 })

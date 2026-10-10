@@ -17,6 +17,44 @@ def payload(recipients):
                 {'id': 'yes', 'label': 'Potwierdzenie', 'type': 'checkbox', 'required': False},
             ]}
 
+@pytest.mark.parametrize('closed', [False, True])
+def test_delete_survey_owner_only_removes_answers_invites_and_reports(app_client, monkeypatch, closed):
+    main, client = app_client
+    reader = create_reader(client)
+    identifier = client.post('/api/surveys', json=payload([reader['id']])).json()['id']
+    retained = client.post('/api/surveys', json=payload([])).json()['id']
+    messages = []
+    monkeypatch.setattr(mailer, 'configuration', lambda: {'public_url': 'https://app.example.com'})
+    monkeypatch.setattr(mailer, 'send_message', lambda *args: messages.append(args))
+    sent = client.post(f'/api/surveys/{identifier}/send', json={
+        'request_id': 'delete_test_request_123', 'recipients': [{'channel': 'email', 'address': 'anna@example.com'}]})
+    assert sent.status_code == 200, sent.text
+    token = re.search(r'/survey/([A-Za-z0-9_-]+)', messages[0][-1]).group(1)
+    answer = {'answers': {'name': 'Anna', 'choice': 'Wtorek'}}
+    assert client.post(f'/api/survey-links/{token}/responses', json=answer).status_code == 200
+    login(client, READER)
+    assert client.post(f'/api/surveys/{identifier}/responses', json=answer).status_code == 200
+    assert client.delete(f'/api/surveys/{identifier}').status_code == 403
+    assert client.delete(f'/api/surveys/{retained}').status_code == 404
+    client.post('/api/logout')
+    assert client.delete(f'/api/surveys/{identifier}').status_code == 401
+    login(client, ADMIN)
+    with main.db() as con:
+        con.execute('INSERT INTO survey_interpretations(survey_id,data,fingerprint,created_at) VALUES(?,?,?,?)',
+                    (identifier, '{}', 'test', main.now()))
+    if closed: assert client.post(f'/api/surveys/{identifier}/close').status_code == 200
+    assert client.delete(f'/api/surveys/{identifier}').status_code == 200
+    assert client.delete(f'/api/surveys/{identifier}').status_code == 404
+    assert client.get(f'/api/surveys/{identifier}').status_code == 404
+    assert client.get(f'/api/surveys/{retained}').status_code == 200
+    assert client.get(f'/api/survey-links/{token}').status_code == 404
+    assert client.post(f'/api/survey-links/{token}/responses', json=answer).status_code == 404
+    with main.db() as con:
+        for table in ('survey_recipients', 'survey_invites', 'survey_dispatches', 'survey_interpretations'):
+            assert con.execute(f'SELECT count(*) FROM {table} WHERE survey_id=?', (identifier,)).fetchone()[0] == 0
+    login(client, READER)
+    assert client.get('/api/surveys').json() == []
+
 def test_survey_assignment_response_privacy_counts_and_persistence(app_client):
     main, client = app_client
     author = client.get('/api/me').json()

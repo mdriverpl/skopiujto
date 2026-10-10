@@ -74,6 +74,8 @@ def initialize():
         dictionaries.initialize(c)
         c.executescript(ai_commands.SCHEMA)
         c.executescript(surveys.SCHEMA)
+        if 'scoring_profile' not in c.columns('surveys'):
+            c.execute("ALTER TABLE surveys ADD COLUMN scoring_profile TEXT NOT NULL DEFAULT ''")
         c.executescript(audit.SCHEMA)
         c.executescript(api_tokens.SCHEMA)
         folder_columns = c.columns('folders')
@@ -804,7 +806,7 @@ def delete_template(template_id: str, current=Depends(user)):
         c.execute('DELETE FROM templates WHERE id=?', (template_id,))
     return Response(status_code=204)
 
-ai_requests = set()
+ai_requests = ai.requests
 
 @app.get('/api/ai/config')
 def ai_configuration(current=Depends(user)):
@@ -813,11 +815,12 @@ def ai_configuration(current=Depends(user)):
 @app.post('/api/ai/generate')
 async def generate_with_ai(body: ai.GenerationInput, current=Depends(user)):
     if not body.prompt.strip():
-        raise HTTPException(422, 'Opisz dokument lub szablon, który chcesz wygenerować.')
-    if body.kind == 'template' and body.folder_id is not None:
-        raise HTTPException(422, 'Szablony nie są przypisywane do folderów.')
-    with db() as c:
-        owned_folder(c, body.folder_id if body.kind == 'document' else None, current, 'add')
+        raise HTTPException(422, 'Opisz dokument, szablon lub ankietę, które chcesz wygenerować.')
+    if body.kind in ('template', 'survey') and body.folder_id is not None:
+        raise HTTPException(422, 'Szablony i ankiety nie są przypisywane do folderów.')
+    if body.kind != 'survey':
+        with db() as c:
+            owned_folder(c, body.folder_id if body.kind == 'document' else None, current, 'add')
     if current['id'] in ai_requests:
         raise HTTPException(429, 'Poczekaj na zakończenie poprzedniego generowania.')
     ai_requests.add(current['id'])

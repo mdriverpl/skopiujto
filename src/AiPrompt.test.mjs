@@ -3,13 +3,13 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { compileScript, parse } from '@vue/compiler-sfc'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 const compiled = compileScript(parse(readFileSync(new URL('./AiPrompt.vue', import.meta.url), 'utf8')).descriptor,
   { id: 'ai-prompt-test' }).content.replace(/^import .*$/gm, '').replace('export default', 'globalThis.component =')
 
 async function panel(api, kind = 'document', folderId = null) {
-  const mounted = [], events = [], context = { ref, FormData, onMounted: callback => mounted.push(callback) }
+  const mounted = [], events = [], context = { ref, computed, FormData, onMounted: callback => mounted.push(callback) }
   runInNewContext(compiled, context)
   const state = context.component.setup({ api, kind, folderId }, { expose() {}, emit: (...args) => events.push(args) })
   await Promise.all(mounted.map(callback => callback()))
@@ -25,6 +25,21 @@ test('missing configuration blocks paid requests while preserving the prompt', a
   assert.equal(state.prompt.value, 'Przygotuj dokument')
   assert.equal(state.error.value, 'Brak klucza')
   assert.equal(events.length, 0)
+})
+
+test('survey generation sends survey kind and delivers questions without saving', async () => {
+  const calls = [], draft = { title: 'Ocena', description: '', questions: [{ id: 'q_1', label: 'Uwagi', type: 'textarea', required: false, options: [] }] }
+  const { state, events } = await panel(async (...args) => {
+    calls.push(args)
+    return args[0] === '/ai/config' ? { available: true, message: '' } : draft
+  }, 'survey')
+  assert.equal(state.subject.value, 'ankietę')
+  state.prompt.value = 'Ankieta satysfakcji'
+  await state.generate()
+  assert.equal(calls.length, 2)
+  assert.equal(calls[1][0], '/ai/generate')
+  assert.equal(calls[1][2].kind, 'survey')
+  assert.equal(events.find(event => event[0] === 'generated')[1], draft)
 })
 
 test('generation passes the folder and delivers an unsaved draft to the editor', async () => {

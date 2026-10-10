@@ -1,11 +1,17 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Sparkles, Upload, FileText, X } from 'lucide-vue-next'
 
 const props = defineProps({ api: Function, kind: { type: String, default: 'document' }, folderId: { type: String, default: null } })
 const emit = defineEmits(['generated', 'busy'])
 const prompt = ref(''), busy = ref(false), checking = ref(true), available = ref(false), error = ref('')
 const sourceFile = ref(null), sourceInput = ref(null)
+const subject = computed(() => props.kind === 'survey' ? 'ankietę' : props.kind === 'template' ? 'szablon' : 'dokument')
+const placeholder = computed(() => props.kind === 'survey'
+  ? 'Np. Ankieta satysfakcji klientów: ocena obsługi od 1 do 5, wybór usługi i miejsce na uwagi.'
+  : props.kind === 'template'
+    ? 'Np. Szablon protokołu spotkania: uczestnicy, ustalenia, zadania i podpisy. Pozostaw pola do uzupełnienia.'
+    : 'Np. Przygotuj ofertę wykonania strony internetowej. Uwzględnij zakres prac, harmonogram i warunki płatności.')
 const accepted = ['pdf', 'doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'png', 'jpg', 'jpeg', 'webp']
 function selectFile(event) {
   if (busy.value) return
@@ -49,7 +55,7 @@ async function generate() {
 
 <template>
   <section class="ai-prompt">
-    <label>Prompt — opisz {{ kind === 'template' ? 'szablon' : 'dokument' }}<textarea v-model="prompt" :disabled="busy" rows="5" maxlength="8000" :placeholder="kind === 'template' ? 'Np. Szablon protokołu spotkania: uczestnicy, ustalenia, zadania i podpisy. Pozostaw pola do uzupełnienia.' : 'Np. Przygotuj ofertę wykonania strony internetowej. Uwzględnij zakres prac, harmonogram i warunki płatności.'"></textarea></label>
+    <label>Prompt — opisz {{ subject }}<textarea v-model="prompt" :disabled="busy" rows="5" maxlength="8000" :placeholder="placeholder"></textarea></label>
     <div v-if="kind === 'template'" class="source-file-section">
       <span class="source-label">Plik źródłowy (opcjonalnie)</span>
       <input ref="sourceInput" class="source-picker" type="file" accept=".pdf,.doc,.docx,.odt,.rtf,.txt,.md,.png,.jpg,.jpeg,.webp" :disabled="busy" aria-label="Wybierz plik do utworzenia szablonu" @change="selectFile" />
