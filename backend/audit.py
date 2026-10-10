@@ -1,0 +1,84 @@
+"""Transactional resource history; access follows the resource's current permissions."""
+import json
+from datetime import datetime, timezone
+from typing import Literal
+from fastapi import Depends, HTTPException, Query
+from backend import access
+
+SCHEMA = '''
+CREATE TABLE IF NOT EXISTS resource_history(
+ id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,resource_id TEXT NOT NULL,
+ owner_id TEXT,resource_name TEXT NOT NULL,actor_id TEXT NOT NULL,actor_name TEXT NOT NULL,
+ action TEXT NOT NULL,changes TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS resource_history_lookup ON resource_history(kind,resource_id,id);
+'''
+LABELS = {'title': 'Nazwa', 'name': 'Nazwa', 'category': 'Kategoria', 'content': 'Treść',
+          'rich_content': 'Formatowanie', 'field_source': 'Wzór dokumentu', 'field_values': 'Dane dokumentu',
+          'status': 'Status', 'description': 'Opis', 'filename': 'Nazwa pliku', 'file_size': 'Rozmiar pliku (B)',
+          'access_mode': 'Dostęp', 'permissions': 'Uprawnienia', 'crop': 'Kadr i rozdzielczość',
+          'comment': 'Komentarz', 'deadline': 'Termin', 'done': 'Wykonanie terminu', 'expires': 'Ważność linku',
+          'document_id': 'Identyfikator dokumentu'}
+
+def change(field, before, after):
+    def display(value):
+        if value is None: return None
+        text = json.dumps(value, ensure_ascii=False, indent=2) if isinstance(value, (dict, list)) else str(value)
+        return text if len(text) <= 3000 else text[:3000] + '\n… (skrócono)'
+    return {'field': field, 'label': LABELS.get(field, field), 'before': display(before), 'after': display(after)}
+
+def differences(before, after, fields):
+    before, after = dict(before), dict(after)
+    result = []
+    for field in fields:
+        old, new = before.get(field), after.get(field)
+        if field in ('rich_content', 'field_values'):
+            try: old = json.loads(old) if isinstance(old, str) else old; new = json.loads(new) if isinstance(new, str) else new
+            except (ValueError, TypeError): pass
+        if old == new: continue
+        if field == 'field_values' and isinstance(old, dict) and isinstance(new, dict):
+            for name in sorted(set(old) | set(new)):
+                if old.get(name) != new.get(name):
+                    item = change(field, old.get(name), new.get(name)); item['label'] += ': ' + name; result.append(item)
+            continue
+        if field in ('content', 'field_source') and isinstance(old, str) and isinstance(new, str) and max(len(old), len(new)) > 3000:
+            common = 0
+            while common < min(len(old), len(new)) and old[common] == new[common]: common += 1
+            start = max(0, common - 120)
+            def excerpt(value): return ('…' if start else '') + value[start:start + 2500] + ('…' if len(value) > start + 2500 else '')
+            old, new = excerpt(old), excerpt(new)
+        # Rich text structure is implementation data. The text has its own change entry.
+        result.append(change(field, 'Poprzednie formatowanie' if old else None, 'Zmieniono formatowanie' if new else None)
+                      if field == 'rich_content' else change(field, old, new))
+    return result
+
+def record(con, current, kind, row, action, changes=None):
+    row = dict(row)
+    con.execute('INSERT INTO resource_history(kind,resource_id,owner_id,resource_name,actor_id,actor_name,action,changes,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
+        (kind, row['id'], row.get('user_id'), row.get('title') or row.get('name') or row['id'], current['id'], current['name'], action,
+         json.dumps(changes or [], ensure_ascii=False), datetime.now(timezone.utc).isoformat()))
+
+def updated(con, current, kind, before, fields, action='Zmieniono'):
+    table = {'document': 'documents', 'template': 'templates', 'folder': 'folders'}[kind]
+    after = con.execute(f'SELECT * FROM {table} WHERE id=?', (before['id'],)).fetchone()
+    changes = differences(before, after, fields)
+    if changes: record(con, current, kind, after, action, changes)
+
+def install(app, db, user):
+    @app.get('/api/history/{kind}/{identifier}')
+    def history(kind: Literal['document', 'template', 'folder'], identifier: str,
+                before: int | None = Query(default=None, ge=1), current=Depends(user)):
+        table = {'document': 'documents', 'template': 'templates', 'folder': 'folders'}[kind]
+        with db() as con:
+            row = con.execute(f'SELECT * FROM {table} WHERE id=?', (identifier,)).fetchone()
+            if row:
+                allowed = (access.document_permissions(con, current, row)['read'] if kind == 'document' else
+                           access.permissions(con, current, row['id'], row['user_id'])['read'] if kind == 'folder' else
+                           row['user_id'] is None or row['user_id'] == current['id'])
+            else:
+                last = con.execute('SELECT owner_id,action FROM resource_history WHERE kind=? AND resource_id=? ORDER BY id DESC LIMIT 1', (kind, identifier)).fetchone()
+                allowed = last and last['action'] == 'Usunięto' and last['owner_id'] == current['id']
+            if not allowed: raise HTTPException(404, 'Nie znaleziono historii tego obiektu.')
+            rows = con.execute('SELECT * FROM resource_history WHERE kind=? AND resource_id=? AND (? IS NULL OR id<?) ORDER BY id DESC LIMIT 101',
+                               (kind, identifier, before, before)).fetchall()
+            return {'items': [{**dict(item), 'changes': json.loads(item['changes'])} for item in rows[:100]],
+                    'next_before': rows[99]['id'] if len(rows) > 100 else None}

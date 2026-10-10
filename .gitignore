@@ -1,0 +1,16 @@
+dist/
+site.tar.gz
+node_modules/
+.venv/
+.runtime/
+data/
+__pycache__/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+.openai/
+probe.txt
+*.log
+*.pem
+*.key

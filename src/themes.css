@@ -1,0 +1,106 @@
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --theme-bg: #11131e;
+  --theme-surface: #1c2030;
+  --theme-surface-soft: #24293c;
+  --theme-text: #edf0fa;
+  --theme-muted: #b4bdd2;
+  --theme-border: #3a425a;
+  --theme-accent: #b8aaff;
+  --theme-accent-hover: #cabfff;
+  --theme-accent-soft: #332d50;
+  --theme-focus: #b8aaff;
+  --theme-on-accent: #191326;
+  --theme-success: #86dfb8;
+  --theme-success-soft: #163b31;
+  --theme-warning: #f3ce88;
+  --theme-warning-soft: #3c3020;
+  --theme-danger: #ffa8b8;
+  --theme-danger-soft: #422733;
+  --theme-danger-border: #814253;
+  --theme-pink: #ffabd6;
+  --theme-pink-soft: #442d40;
+}
+:root[data-theme='sweet'] {
+  color-scheme: light;
+  --theme-bg: #fff3f8;
+  --theme-surface: #fffcfe;
+  --theme-surface-soft: #fff0f6;
+  --theme-text: #502a40;
+  --theme-muted: #87586f;
+  --theme-border: #efd1e0;
+  --theme-accent: #b83274;
+  --theme-accent-hover: #98235f;
+  --theme-accent-soft: #fce2ef;
+  --theme-focus: #d2679b;
+  --theme-on-accent: #ffffff;
+  --theme-success: #287354;
+  --theme-success-soft: #e4f6eb;
+  --theme-warning: #8a6020;
+  --theme-warning-soft: #fff1d9;
+  --theme-danger: #af354c;
+  --theme-danger-soft: #ffe5eb;
+  --theme-danger-border: #e9b6c3;
+  --theme-pink: #ad3973;
+  --theme-pink-soft: #fce2ef;
+}
+:root[data-theme='colorful'] {
+  color-scheme: light;
+  --theme-bg: #eef8fc;
+  --theme-surface: #ffffff;
+  --theme-surface-soft: #edf7fc;
+  --theme-text: #243854;
+  --theme-muted: #526d85;
+  --theme-border: #c6e0ec;
+  --theme-accent: #096d94;
+  --theme-accent-hover: #075371;
+  --theme-accent-soft: #dcf3fa;
+  --theme-focus: #398ab1;
+  --theme-on-accent: #ffffff;
+  --theme-success: #167358;
+  --theme-success-soft: #dff7e9;
+  --theme-warning: #946000;
+  --theme-warning-soft: #fff0cb;
+  --theme-danger: #b73550;
+  --theme-danger-soft: #ffe4eb;
+  --theme-danger-border: #f0b9c5;
+  --theme-pink: #a7317c;
+  --theme-pink-soft: #fce1f2;
+}
+:root {
+  color-scheme: light;
+  --page-bg: var(--theme-bg, #f7f8fc);
+  --surface: var(--theme-surface, #ffffff);
+  --surface-soft: var(--theme-surface-soft, #fbfbfe);
+  --text: var(--theme-text, #25283d);
+  --secondary: var(--theme-muted, #777d91);
+  --muted: var(--theme-muted, #9296a7);
+  --border: var(--theme-border, #e8eaf2);
+  --accent: var(--theme-accent, #6654d9);
+  --accent-hover: var(--theme-accent-hover, #5744c6);
+  --accent-soft: var(--theme-accent-soft, #ede9fc);
+  --focus-ring: var(--theme-focus, #bdb2ff);
+  --success: var(--theme-success, #27836b);
+  --success-soft: var(--theme-success-soft, #e7f6ef);
+  --warning: var(--theme-warning, #a57c34);
+  --warning-soft: var(--theme-warning-soft, #fff7e9);
+  --danger: var(--theme-danger, #a33b3b);
+  --danger-soft: var(--theme-danger-soft, #fff1f1);
+  --hero-bg: var(--theme-accent-soft, #f0edff);
+  --hero-border: var(--theme-border, #e8eaf2);
+  --robot-shadow: #25283d26;
+}
+:root[data-theme='sweet'] body { background: radial-gradient(ellipse at top left, #ffe2ef, transparent 55%), radial-gradient(ellipse at bottom right, #eee3ff, transparent 55%), var(--theme-bg); background-attachment: fixed; }
+:root[data-theme='colorful'] body { background: radial-gradient(ellipse at top left, #d4f5f4, transparent 55%), radial-gradient(ellipse at bottom right, #efe2ff, transparent 55%), var(--theme-bg); background-attachment: fixed; }
+:root[data-theme='colorful'] .brand-icon, :root[data-theme='colorful'] .primary { background: linear-gradient(120deg, #096d94, #6940aa); color: white; }
+:root[data-theme='colorful'] .dictionary-icon { color: #946000; background: #fff0cb; }
+:root[data-theme='colorful'] .ai-tile .dictionary-icon { color: #6940aa; background: #eee2ff; }
+:root[data-theme='sweet'] .panel { box-shadow: 0 5px 24px #b8327409; }
+input[type='checkbox'], input[type='radio'] { accent-color: var(--theme-accent, #6654d9); }
+@media (max-width: 640px) {
+  .account { gap: 5px; }
+  .account-menu > button { max-width: 145px; padding: 8px; overflow: hidden; }
+  .brand { font-size: 18px; gap: 7px; }
+  .brand-icon { padding: 7px; }
+  .theme-options { right: -90px; }
+}
