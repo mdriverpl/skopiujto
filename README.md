@@ -8,6 +8,27 @@ być zapisywane w bazie lub magazynie S3. Ikona palety obok nazwy użytkownika
 otwiera wybór motywu: normalny, słodki, ciemny i kolorowy. Wybór jest
 zapamiętywany w tej przeglądarce.
 
+GitHub Actions automatycznie testuje projekt, buduje frontend oraz obraz Docker
+po zmianach na `main`. Testy backendu działają na izolowanych bazach SQLite
+i PostgreSQL. Po udanych testach oraz sprawdzeniu kontenera obraz trafia do
+`ghcr.io/mdriverpl/skopiujto:latest`; dostępny jest też tag z pełnym SHA commita.
+Build frontendu można pobrać jako artefakt `frontend-dist` w zakładce
+[Actions](https://github.com/mdriverpl/skopiujto/actions).
+
+Docker Compose: `docker compose pull`, a następnie `docker compose up -d`
+pobiera obraz zbudowany na GitHubie i uruchamia aplikację na
+http://localhost:8080. Kontener korzysta z PostgreSQL i pozostałych ustawień
+z lokalnego `.env`; plik ten nie trafia do obrazu. `DATABASE_URL` musi być
+uzupełnione. Opcjonalnie ustaw `APP_PORT`, aby zmienić port (domyślnie 8080).
+Ustaw `EDOCUMENTS_PUBLIC_URL` na adres dostępny dla odbiorców wiadomości.
+Frontend i API działają w jednym kontenerze. Stan sprawdzisz poleceniem
+`docker compose ps`, a logi przez `docker compose logs -f app`.
+Jeśli obraz jest prywatny, zaloguj się do `ghcr.io` przez `docker login ghcr.io`
+kontem z dostępem do pakietu (token z uprawnieniem `read:packages`).
+Opcjonalnie ustaw `APP_IMAGE_TAG` na SHA commita, aby użyć konkretnej wersji.
+Lokalne budowanie jest nadal możliwe:
+`docker compose -f compose.yaml -f compose.build.yaml up -d --build`.
+
 Konfiguracja i migracja danych: [PostgreSQL](backend/POSTGRES.md).
 Integracje i klucze: [REST API](backend/API.md); dokumentacja działa na `/api/docs`.
 
