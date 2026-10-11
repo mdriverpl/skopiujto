@@ -464,3 +464,28 @@ dist/
 ```
 
 `dist/server/index.js` is an ES module with a default export containing `fetch(request, env, ctx)`. Edit `worker/index.js`, not the generated file under `dist/`.
+
+## Edzio — polecenia ze strony Start
+
+Ikona Edzia otwiera rozmowę, a mikrofon uruchamia dyktowanie po polsku. Po rozpoznaniu
+mowy można poprawić tekst i kliknąć „Przygotuj”. AI wybiera rodzaj polecenia:
+
+- „Zaplanuj spotkanie jutro o 9:00 w sali 4” — edytowalny podgląd osobistego wpisu
+  z datą i godziną; zapis następuje po potwierdzeniu i otwiera terminarz.
+- „Wyślij wiadomość do zespołu o spotkaniu” — podgląd treści i odbiorców w Wiadomościach;
+  wysyłka następuje po kliknięciu „Wyślij wiadomość”.
+- „Zrób dokument: oferta dla naszych pracowników” — generowanie wersji roboczej
+  w edytorze; dokument pojawia się na dysku po zapisaniu.
+- „Dodaj zadanie: przygotować ofertę do piątku” — podgląd zadania przypisanego do siebie.
+  Przy niepełnej dacie można uzupełnić termin ręcznie.
+
+Spotkanie jest osobistym zadaniem w kalendarzu. Zaproszenia do innych osób wymagają
+osobnego polecenia wysyłki wiadomości. Niejasne lub wieloetapowe polecenie wywołuje
+pytanie o doprecyzowanie. Dokumenty nadal wymagają uprawnienia dodawania na dysku.
+Rozpoznawanie przez /api/ai/assistant/plan nie zapisuje ani nie wysyła danych.
+Daty względne odnoszą się do strefy Europe/Warsaw; formularz edycji daty używa czasu
+urządzenia, a kalendarz pokazuje godziny Europe/Warsaw.
+
+Integracja korzysta z konfiguracji OPENAI_API_KEY i OPENAI_MODEL oraz
+[Structured Outputs w Responses API](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses).
+Testy backend/test_assistant.py zastępują transport AI i nie wykonują płatnych zapytań.

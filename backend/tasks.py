@@ -4,7 +4,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend import access, mailing
@@ -69,7 +69,8 @@ def install(app, db, user, owned, now):
         item = dict(row)
         item.update(origin='task', key='task:' + row['id'], filename=None,
                     can_update=row['assignee_id'] == current['id'] and row['status'] in ('todo', 'in_progress'),
-                    can_cancel=row['sender_id'] == current['id'] and row['status'] in ('todo', 'in_progress'))
+                    can_cancel=row['sender_id'] == current['id'] and row['status'] in ('todo', 'in_progress'),
+                    can_delete=row['sender_id'] == current['id'])
         doc = con.execute('SELECT id,user_id,folder_id,filename,uploaded_by,title,status,version,created_at FROM documents WHERE id=?', (row['document_id'],)).fetchone() if row['document_id'] else None
         if doc and access.document_permissions(con, current, doc)['read']:
             item.update(document_title=doc['title'], filename=doc['filename'])
@@ -180,3 +181,15 @@ def install(app, db, user, owned, now):
             con.execute('UPDATE user_tasks SET status=?,updated_at=?,completed_at=?,version=version+1 WHERE id=?',
                         (body.status, now(), now() if body.status == 'done' else None, identifier))
             return details(con, assigned(con, identifier, current), current)
+
+    @app.delete('/api/tasks/{identifier}')
+    def delete(identifier: str, version: int = Query(ge=1), current=Depends(user)):
+        with db() as con:
+            con.begin_write()
+            row = assigned(con, identifier, current)
+            if row['sender_id'] != current['id']:
+                raise HTTPException(403, 'Zadanie może usunąć tylko jego autor.')
+            if row['version'] != version:
+                raise HTTPException(409, 'Zadanie zostało zmienione. Odśwież listę przed usunięciem.')
+            con.execute('DELETE FROM user_tasks WHERE id=?', (identifier,))
+            return {'ok': True}

@@ -179,3 +179,52 @@ def test_legacy_task_schema_migrates_without_losing_tasks(postgres_schema):
         tasks.initialize(con)
         row = con.execute('SELECT * FROM user_tasks').fetchone()
         assert row['id'] == 'task' and row['folder_id'] is None
+
+
+def test_delete_task_checks_author_version_and_removes_from_both_lists(app_client):
+    _, client = app_client
+    reader = create_reader(client)
+    task = client.post('/api/tasks', json={'title': 'Do usunięcia', 'assignee_id': reader['id']}).json()
+    assert task['can_delete'] is True
+    identifier = task['id']
+    url = '/api/tasks/' + identifier
+    client.post('/api/logout')
+    assert client.delete(url + '?version=1').status_code == 401
+    login(client, READER)
+    assert client.get('/api/tasks').json()['mine'][0]['can_delete'] is False
+    assert client.delete(url + '?version=1').status_code == 403
+    assert client.patch(url + '/status', json={'status': 'in_progress', 'version': 1}).status_code == 200
+    login(client, ADMIN)
+    assert client.delete(url + '?version=1').status_code == 409
+    assert client.delete(url).status_code == 422
+    assert client.delete(url + '?version=0').status_code == 422
+    assert len(client.get('/api/tasks').json()['sent']) == 1
+    create_account(client, name='third-delete', password='third-password-123', role='admin')
+    login(client, {'name': 'third-delete', 'password': 'third-password-123'})
+    assert client.delete(url + '?version=2').status_code == 404
+    login(client, ADMIN)
+    assert client.delete(url + '?version=2').status_code == 200
+    assert client.get('/api/tasks').json()['sent'] == []
+    assert client.delete(url + '?version=2').status_code == 404
+    login(client, READER)
+    assert client.get('/api/tasks').json() == {'mine': [], 'sent': [], 'waiting': 0}
+
+
+@pytest.mark.parametrize('target', ['document', 'folder'])
+def test_delete_completed_self_task_keeps_linked_resource(app_client, target):
+    main, client = app_client
+    me = client.get('/api/me').json()
+    resource = client.post('/api/documents' if target == 'document' else '/api/folders',
+                           json={'title': 'Plik', 'status': 'Gotowy'} if target == 'document' else {'name': 'Katalog'}).json()
+    task = client.post('/api/tasks', json={'title': 'Własne zadanie', 'assignee_id': me['id'],
+                                         target + '_id': resource['id']}).json()
+    url = '/api/tasks/' + task['id']
+    assert client.patch(url + '/status', json={'status': 'done', 'version': 1}).status_code == 200
+    assert client.get('/api/tasks').json()['mine'][0]['can_delete'] is True
+    assert client.delete(url + '?version=2').status_code == 200
+    main.initialize()
+    listing = client.get('/api/tasks').json()
+    assert listing['mine'] == [] and listing['sent'] == [] and listing['waiting'] == 0
+    with main.db() as con:
+        table = 'documents' if target == 'document' else 'folders'
+        assert con.execute('SELECT id FROM ' + table + ' WHERE id=?', (resource['id'],)).fetchone()

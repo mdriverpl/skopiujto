@@ -6,7 +6,7 @@ import PasswordChange from './PasswordChange.vue'
 import ThemePicker from './ThemePicker.vue'
 import BrandLogo from './BrandLogo.vue'
 import { Menu } from 'lucide-vue-next'
-import { House } from 'lucide-vue-next'
+import { House, CalendarDays } from 'lucide-vue-next'
 const StartPanel = defineAsyncComponent(() => import('./StartPanel.vue'))
 import ImagePreview from './ImagePreview.vue'
 import ImageEditor from './ImageEditor.vue'
@@ -26,6 +26,7 @@ const historyTarget = ref(null)
 const SurveysPanel = defineAsyncComponent(() => import('./SurveysPanel.vue'))
 const SurveyPublic = defineAsyncComponent(() => import('./SurveyPublic.vue'))
 const TasksPanel = defineAsyncComponent(() => import('./TasksPanel.vue'))
+const CalendarPanel = defineAsyncComponent(() => import('./CalendarPanel.vue'))
 const DocumentComposer = defineAsyncComponent(() => import('./DocumentComposer.vue'))
 const documentComposer = ref(null)
 const RichTextEditor = defineAsyncComponent(() => import('./RichTextEditor.vue'))
@@ -90,6 +91,10 @@ const activeSurveys = computed(() => surveyData.value.filter(item => !item.close
 const templates = ref([])
 const search = ref('')
 const view = ref('start')
+const startAiPrompt = ref('')
+function startCommand(prompt) { startAiPrompt.value = prompt; startNavigate('ai') }
+function startDocument(draft) { if (!rootRights.value.add) { error.value = 'Brak uprawnienia do dodawania dokumentów.'; return }; currentFolder.value = null; view.value = 'drive'; search.value = ''; editorTab.value = 'document'; editor.value = { ...draft, folder_id: null } }
+async function startScheduled() { startNavigate('calendar'); await run(loadDocuments) }
 const startSurveyId = ref(null)
 const surveyFilter = ref('all')
 function startNavigate(target) {
@@ -456,6 +461,7 @@ onBeforeUnmount(() => {
           <button :class="{ active: view === 'start' }" :aria-current="(view === 'start') ? 'page' : undefined" @click="view = 'start'; search = ''"><House :size="18" /> Start</button>
           <button :class="{ active: view === 'ai' }" :aria-current="(view === 'ai') ? 'page' : undefined" @click="view = 'ai'; search = ''"><Mail :size="18" /> Wiadomości</button>
           <button :class="{ active: view === 'tasks' }" :aria-current="(view === 'tasks') ? 'page' : undefined" @click="view = 'tasks'; search = ''"><ClipboardList :size="18" /> Zadania <span v-if="tasksWaiting">({{ tasksWaiting }})</span></button>
+          <button :class="{ active: view === 'calendar' }" :aria-current="view === 'calendar' ? 'page' : undefined" @click="view = 'calendar'; search = ''"><CalendarDays :size="18" /> Terminarz</button>
           <button :class="{ active: view === 'surveys' }" :aria-current="(view === 'surveys') ? 'page' : undefined" @click="startSurveyId = null; surveyFilter = 'all'; view = 'surveys'; search = ''"><ClipboardCheck :size="18" /> Ankiety ({{ activeSurveys }})</button>
           <button :class="{ active: view === 'drive' || view === 'active' }" :aria-current="(view === 'drive' || view === 'active') ? 'page' : undefined" @click="openDriveFolder(null)"><HardDrive :size="18" /> Mój dysk</button>
           <button :class="{ active: view === 'templates' }" :aria-current="(view === 'templates') ? 'page' : undefined" @click="view = 'templates'; search = ''"><FileText :size="18" /> Szablony</button>
@@ -490,7 +496,7 @@ onBeforeUnmount(() => {
       <PasswordChange v-else-if="user?.must_change_password" :api="api" required @saved="passwordSaved" />
       <template v-else-if="user">
 
-        <StartPanel v-if="view === 'start'" :user="user" :surveys="surveyData" :task-data="taskData" :busy="busy" @navigate="startNavigate" @survey="startOpenSurvey" @refresh="run(loadDocuments)" />
+        <StartPanel v-if="view === 'start'" :user="user" :surveys="surveyData" :task-data="taskData" :busy="busy" :api="api" @document="startDocument" @scheduled="startScheduled" @navigate="startNavigate" @command="startCommand" @survey="startOpenSurvey" @refresh="run(loadDocuments)" />
         <template v-else-if="view === 'drive'">
           <nav class="breadcrumbs" aria-label="Ścieżka folderu"><button :disabled="busy" @click="navigateFolder(null)"><HardDrive :size="16" /> Mój dysk</button><template v-for="folder in breadcrumbs" :key="folder.id"><ChevronRight :size="15" /><button :disabled="busy" :aria-current="folder.id === currentFolder ? 'page' : undefined" @click="navigateFolder(folder.id)">{{ folder.name }}</button></template><button v-if="currentFolderInfo?.permissions?.read" class="icon-button" :disabled="busy" title="Historia katalogu" aria-label="Historia katalogu" @click="historyTarget = { ...currentFolderInfo, kind: 'folder' }"><History :size="17" /></button></nav>
           <input ref="fileInput" class="file-picker" type="file" multiple aria-label="Wybierz pliki do przesłania" :disabled="busy" @change="uploadFiles($event.target.files)" />
@@ -518,9 +524,10 @@ onBeforeUnmount(() => {
           <FolderTasks v-if="currentFolderInfo" :folder="currentFolderInfo" :task-data="taskData" :busy="busy" @add-task="addResourceTask($event, true)" @open-tasks="view = 'tasks'; search = ''" />
         </template>
         <ActiveDocuments v-else-if="view === 'active'" :documents="activeDocuments" :folders="folders" :busy="busy" @back="openDriveFolder(null)" @refresh="run(loadDocuments)" @open-document="openDocument" @open-image="imageEditorFile = $event" @open-email="emailFile = $event" @change-status="statusDocument = $event" @open-folder="openDriveFolder" />
-        <AiCommands v-else-if="view === 'ai'" :api="api" />
+        <AiCommands v-else-if="view === 'ai'" :api="api" :initial-prompt="startAiPrompt" @prompt-consumed="startAiPrompt = ''" />
         <SurveysPanel v-else-if="view === 'surveys'" :api="api" :initial-survey-id="startSurveyId" :initial-filter="surveyFilter" @loaded="surveyData = $event" />
         <DictionariesPanel v-else-if="view === 'dictionaries'" :api="api" />
+        <CalendarPanel v-else-if="view === 'calendar'" :api="api" :documents="documents" :folders="folders" @loaded="taskData = $event" @open-tasks="view = 'tasks'; search = ''" @open-document="openDocument" @open-folder="openDriveFolder" @new-task="taskTarget = {}" />
         <TasksPanel v-else-if="view === 'tasks'" :api="api" :current-user="user" :documents="documents" :folders="folders" @open-folder="openDriveFolder" @loaded="taskData = $event" @updated="run(loadDocuments)" @open-document="openDocument" @open-email="emailFile = $event" />
         <template v-else-if="view === 'admin' && user.role === 'admin'"><AdminPanel :api="api" :current-user="user" @updated="refreshAccess" /></template>
         <TemplatesPanel v-else @history="historyTarget = { ...$event, kind: 'template' }" :templates="templates" :api="api" :can-add="rootRights.add" @updated="run(loadDocuments)" @created-document="templateDocumentCreated" />

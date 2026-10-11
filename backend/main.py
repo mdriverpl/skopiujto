@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
 from backend import storage, access, admin, images, mailing, workflow, richtext, ai, document_fields, ai_files, saved_data, tasks, dictionaries, dictionary_excel, ai_commands, surveys, audit
-from backend import database, api_tokens
+from backend import database, api_tokens, assistant
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / '.env')
@@ -851,6 +851,7 @@ saved_data.install(app, db, user, now)
 dictionaries.install(app, db, user, now)
 dictionary_excel.install(app, db, user, now)
 ai_commands.install(app, db, user, now)
+assistant.install(app, user)
 surveys.install(app, db, user, now)
 audit.install(app, db, user)
 tasks.install(app, db, user, owned, now)

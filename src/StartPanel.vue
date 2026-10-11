@@ -1,25 +1,323 @@
 <script setup>
-import { computed } from 'vue'
-import { Bot, Sparkles, ArrowUpRight, ArrowRight, ClipboardCheck, Folder, FileText, CheckCircle2, Clock3, ListTodo, Mail, RefreshCw } from 'lucide-vue-next'
+import { computed, ref, onBeforeUnmount } from 'vue'
+import { Bot, Sparkles, ArrowUpRight, ArrowRight, ClipboardCheck, CalendarDays, HardDrive, ListTodo, Mic, Square, X, RefreshCw } from 'lucide-vue-next'
 import { startSummary } from './startSummary.js'
-const props = defineProps({ user: Object, surveys: Array, taskData: Object, busy: Boolean })
-const emit = defineEmits(['navigate', 'survey', 'refresh'])
+const props = defineProps({ user: Object, surveys: Array, taskData: Object, busy: Boolean, api: Function })
+const emit = defineEmits(['navigate', 'survey', 'refresh', 'command', 'document', 'scheduled'])
 const summary = computed(() => startSummary(props.surveys, props.taskData))
-const today = new Intl.DateTimeFormat('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date())
+const today = new Intl.DateTimeFormat('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Warsaw' }).format(new Date())
 const date = value => new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'short' }).format(new Date(value))
 const overdue = task => task.due_at && new Date(task.due_at) < new Date()
 const taskLabels = { signature: 'Do podpisania', modification: 'Do modyfikacji', approval: 'Do akceptacji', general: 'Zadanie', deadline: 'Termin' }
-const actionLabel = computed(() => summary.value.tasks.length ? 'Przejdź do moich zadań' : summary.value.surveys.length ? 'Wypełnij ankiety' : 'Otwórz wiadomości')
+const weekdayGreetings = {
+  Mon: [
+    { title: 'Poniedziałek? Jeszcze ładuję osobowość.', description: 'Po weekendzie nawet moje obwody proszą o pięć minut. Ty złap kawę, ja pomogę ogarnąć pierwszą sprawę.' },
+    { title: 'Dziś działam na kawie i dobrych chęciach.', description: 'Poniedziałek wszedł bez pukania. Już mu tłumaczę, że zaczynamy spokojnie.' },
+    { title: 'Mój procesor nadal leży pod kołdrą.', description: 'Ale bez obaw — reszta mnie jest gotowa do pomocy. Powiedz, od czego zaczynamy ten poniedziałek.' },
+  ],
+  Tue: [
+    { title: 'Przeżyłem poniedziałek. Mam to w CV.', description: 'We wtorek czuję się już prawie profesjonalnie. Pomogę Ci coś załatwić, zanim kawa wystygnie.' },
+    { title: 'Dziś mam już wszystkie obwody na miejscu.', description: 'Wtorek to poniedziałek po aktualizacji. Trochę mniej ziewam, trochę szybciej ogarniam.' },
+    { title: 'Sprawdziłem: to już nie poniedziałek!', description: 'Uznałem, że ta wiadomość zasługuje na chwilę radości. A teraz — co mogę dla Ciebie przygotować?' },
+  ],
+  Wed: [
+    { title: 'Widzę weekend. Jeszcze trochę pikselowy.', description: 'Środa, czyli półmetek. Ja wypatruję piątku, a Tobie pomogę ogarnąć to, co po drodze.' },
+    { title: 'Połowę tygodnia mam już odhaczoną.', description: 'Drugiej połowie obiecałem, że będę miły. Zaczynam od pomocy Tobie.' },
+    { title: 'Sprawdziłem mapę: do piątku już z górki.', description: 'Mój GPS czasem przesadza z optymizmem, ale w środę wolno mi wierzyć w weekend.' },
+  ],
+  Thu: [
+    { title: 'Czuję weekend. I to bez czujnika!', description: 'Czwartek — jeszcze chwila i przełączę się w tryb kanapy. Na razie jestem cały Twój.' },
+    { title: 'Testuję dziś piątek w wersji demo.', description: 'Czwartek wygląda obiecująco. Pomogę Ci domknąć kilka spraw, żeby weekend miał czystą kartę.' },
+    { title: 'Już szykuję kapcie dla moich obwodów.', description: 'To dopiero czwartek, wiem. Ale przygotowanie do weekendu traktuję bardzo poważnie.' },
+  ],
+  Fri: [
+    { title: 'W głowie już mam weekend!', description: 'Piątek! Jeszcze coś pomogę ogarnąć, a potem odłączam kabel od obowiązków.' },
+    { title: 'Dostałem zaproszenie od kanapy.', description: 'Nie wypada odmówić. Ale najpierw pomogę Ci zamknąć dzień — kanapa chwilę poczeka.' },
+    { title: 'Dziś nawet moje bity tańczą.', description: 'Piątek robi swoje. Powiedz, co mam przygotować, zanim zacznę planować nicnierobienie.' },
+  ],
+  Sat: [
+    { title: 'Dałem budzikowi dzień wolny.', description: 'Jest sobota. Jeśli potrzebujesz pomocy, jestem tutaj — ale obiecaj, że znajdziesz też chwilę dla siebie.' },
+    { title: 'Pracuję dziś w cyfrowych kapciach.', description: 'Sobotni luz zobowiązuje. Pomogę bez pośpiechu, a potem polecam spacer albo bardzo ważne nic.' },
+    { title: 'Mój plan na sobotę? Mniej planów.', description: 'Ale dla Twojego pomysłu zrobię wyjątek. Powiedz, co chodzi Ci po głowie.' },
+  ],
+  Sun: [
+    { title: 'Udawałem, że nie znam poniedziałku.', description: 'Niedziela jeszcze trwa. Ja pilnuję spokoju, a jutro niech grzecznie poczeka za drzwiami.' },
+    { title: 'Ładuję baterie. Tobie też polecam.', description: 'Niedzielę spędzam na oszczędzaniu energii. Na pomoc dla Ciebie zostawiłem mały zapas.' },
+    { title: 'Schowałem poniedziałek za kanapą.', description: 'Pewnie jutro go znajdziemy. Dziś jeszcze cieszmy się niedzielą — zasłużyliśmy.' },
+  ],
+}
+const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'Europe/Warsaw' }).format(new Date())
+const greetingOptions = weekdayGreetings[weekday]
+let greetingIndex = Math.floor(Math.random() * greetingOptions.length)
+try {
+  const previous = sessionStorage.getItem('edokumenty-start-greeting')
+  if (previous === weekday + ':' + greetingIndex) greetingIndex = (greetingIndex + 1) % greetingOptions.length
+  sessionStorage.setItem('edokumenty-start-greeting', weekday + ':' + greetingIndex)
+} catch {}
+const dailyGreeting = greetingOptions[greetingIndex]
+const commandDialog = ref(null)
+const command = ref(''), listening = ref(false), voiceError = ref('')
+const assistantBusy = ref(false), assistantError = ref(''), assistantReply = ref(''), assistantPlan = ref(null)
+const SpeechRecognition = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition)
+let recognition
+function openCommand() {
+  if (assistantBusy.value) return
+  stopDictation()
+  command.value = ''
+  voiceError.value = ''
+  assistantError.value = ''
+  assistantReply.value = ''
+  assistantPlan.value = null
+  commandDialog.value?.showModal()
+}
+function stopDictation() {
+  if (recognition) {
+    recognition.onstart = null; recognition.onend = null
+    recognition.onresult = null; recognition.onerror = null
+    recognition.abort()
+    recognition = null
+  }
+  listening.value = false
+}
+function useExample(value) {
+  if (assistantBusy.value || listening.value) return
+  command.value = value
+  voiceError.value = ''; assistantError.value = ''; assistantReply.value = ''
+}
+function closeOnBackdrop(event) {
+  if (assistantBusy.value) return
+  if (event.target !== commandDialog.value) return
+  const bounds = commandDialog.value.getBoundingClientRect()
+  if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) commandDialog.value.close()
+}
+function dictate() {
+  if (listening.value) { recognition?.stop(); return }
+  voiceError.value = ''
+  if (!SpeechRecognition) { voiceError.value = 'Ta przeglądarka nie obsługuje dyktowania. Użyj mikrofonu na klawiaturze telefonu lub wpisz polecenie.'; return }
+  recognition = new SpeechRecognition()
+  recognition.lang = 'pl-PL'
+  recognition.interimResults = false
+  recognition.continuous = false
+  recognition.onstart = () => { listening.value = true }
+  recognition.onend = () => { listening.value = false }
+  recognition.onresult = event => {
+    const transcript = Array.from(event.results).filter(result => result.isFinal).map(result => result[0].transcript).join(' ')
+    command.value = [command.value.trim(), transcript].filter(Boolean).join(' ').slice(0, 6000)
+  }
+  recognition.onerror = event => {
+    if (event.error === 'aborted') return
+    listening.value = false
+    voiceError.value = event.error === 'not-allowed' ? 'Zezwól przeglądarce na dostęp do mikrofonu. Na telefonie otwórz aplikację przez HTTPS.' : event.error === 'no-speech' ? 'Nie usłyszałem polecenia. Spróbuj ponownie.' : 'Dyktowanie nie powiodło się. Spróbuj ponownie lub wpisz polecenie.'
+  }
+  try { recognition.start() } catch { listening.value = false; voiceError.value = 'Nie można uruchomić mikrofonu. Wpisz polecenie lub spróbuj ponownie.' }
+}
+function localInputDate(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  const two = n => String(n).padStart(2, '0')
+  return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate()) + 'T' + two(d.getHours()) + ':' + two(d.getMinutes())
+}
+async function submitCommand() {
+  if (!command.value.trim() || props.busy || assistantBusy.value || listening.value) return
+  assistantBusy.value = true; voiceError.value = ''; assistantError.value = ''; assistantReply.value = ''; assistantPlan.value = null
+  try {
+    const plan = await props.api('/ai/assistant/plan', 'POST', { prompt: command.value.trim() })
+    assistantReply.value = plan.explanation
+    if (plan.action === 'message') {
+      commandDialog.value?.close()
+      emit('command', plan.prompt)
+    } else if (plan.action === 'document') {
+      assistantReply.value = 'Przygotowuję dokument…'
+      const draft = await props.api('/ai/generate', 'POST', { prompt: plan.prompt, kind: 'document', folder_id: null })
+      commandDialog.value?.close()
+      emit('document', draft)
+    } else if (plan.action === 'meeting' || plan.action === 'task') {
+      assistantPlan.value = { ...plan, due_input: localInputDate(plan.due_at) }
+    }
+  } catch (err) { assistantError.value = err.message }
+  finally { assistantBusy.value = false }
+}
+async function scheduleTask() {
+  const plan = assistantPlan.value
+  if (!plan || assistantBusy.value || !plan.title.trim()) return
+  if (plan.action === 'meeting' && !plan.due_input) { assistantError.value = 'Podaj datę i godzinę spotkania.'; return }
+  assistantBusy.value = true; assistantError.value = ''
+  try {
+    await props.api('/tasks', 'POST', { title: plan.title.trim(), description: plan.description,
+      assignee_id: plan.assignee_id, kind: 'general', due_at: plan.due_input ? new Date(plan.due_input).toISOString() : null })
+    commandDialog.value?.close()
+    emit('scheduled')
+  } catch (err) { assistantError.value = err.message }
+  finally { assistantBusy.value = false }
+}
+onBeforeUnmount(() => { if (recognition) { recognition.onresult = null; recognition.onerror = null; recognition.onend = null; recognition.abort() } })
 </script>
 <template>
   <section class="start-page">
-    <header class="start-welcome"><div><span class="start-date">{{ today }}</span><h1>Cześć, {{ user?.name }} <span class="hello-wave" aria-hidden="true">✦</span></h1><p>Twój dzień, uporządkowany. Zobacz, co czeka na Ciebie.</p></div><button class="icon-button" :disabled="busy" aria-label="Odśwież stronę startową" @click="emit('refresh')"><RefreshCw :size="18" /></button></header>
-    <div class="start-hero"><div class="hero-copy"><span class="hero-label"><Sparkles :size="14" /> TWOJE CENTRUM DOWODZENIA</span><h2>{{ summary.total ? 'Zróbmy miejsce na dobry dzień.' : 'Wszystko na bieżąco!' }}</h2><p v-if="summary.total">Masz <strong>{{ summary.total }}</strong> spraw do załatwienia. Zacznij od jednej — reszta poczeka na swoją kolej.</p><p v-else>Nie masz teraz ankiet ani zadań do wykonania. Możesz spokojnie zająć się kolejnym pomysłem.</p><button :disabled="busy" @click="emit('navigate', summary.tasks.length ? 'tasks' : summary.surveys.length ? 'surveys' : 'ai')">{{ actionLabel }} <ArrowRight :size="16" /></button></div><div class="robot-art" aria-hidden="true"><span class="robot-orbit orbit-one"></span><span class="robot-orbit orbit-two"></span><span class="robot-spark spark-one"><Sparkles :size="22" /></span><span class="robot-spark spark-two">✦</span><div class="robot-body"><Bot :size="104" :stroke-width="1.4" /><span class="robot-status"></span></div><span class="robot-caption"><span></span> Gotowy do pomocy</span></div></div>
-    <div class="start-cards"><button class="panel start-card survey-summary" :disabled="busy" @click="emit('navigate', 'surveys')"><div class="summary-top"><span class="summary-icon"><ClipboardCheck :size="23" /></span><ArrowUpRight :size="19" /></div><strong>{{ summary.surveys.length }}</strong><h2>Ankiety do wypełnienia</h2><p>{{ summary.surveys.length ? 'Twoje odpowiedzi mają znaczenie.' : 'Wszystkie odpowiedzi na bieżąco.' }}</p><span class="summary-link">Zobacz ankiety <ArrowRight :size="14" /></span></button><button class="panel start-card folder-summary" :disabled="busy" @click="emit('navigate', 'tasks')"><div class="summary-top"><span class="summary-icon"><Folder :size="23" /></span><ArrowUpRight :size="19" /></div><strong>{{ summary.folders }}</strong><h2>Katalogi do uzupełnienia</h2><p>{{ summary.folderTasks.length }} przypisanych zadań w katalogach.</p><span class="summary-link">Zobacz zadania <ArrowRight :size="14" /></span></button><button class="panel start-card file-summary" :disabled="busy" @click="emit('navigate', 'tasks')"><div class="summary-top"><span class="summary-icon"><FileText :size="23" /></span><ArrowUpRight :size="19" /></div><strong>{{ summary.files }}</strong><h2>Pliki wymagające działania</h2><p>Podpisanie, uzupełnienie lub akceptacja.</p><span class="summary-link">Zobacz zadania <ArrowRight :size="14" /></span></button></div>
-    <div class="start-bottom"><section class="panel start-list"><header><div><span class="section-label">TWÓJ NASTĘPNY KROK</span><h2>Do zrobienia</h2></div><button class="text-link" :disabled="busy" @click="emit('navigate', 'tasks')">Wszystkie zadania <ArrowUpRight :size="15" /></button></header><button v-for="task in summary.tasks.slice(0, 5)" :key="task.key || task.id" class="start-task" :disabled="busy" @click="emit('navigate', 'tasks')"><span class="task-mark"><Folder v-if="task.folder_id" :size="18" /><FileText v-else-if="task.document_id" :size="18" /><ListTodo v-else :size="18" /></span><span class="task-description"><strong>{{ task.title }}</strong><small>{{ taskLabels[task.kind] || 'Zadanie' }}<template v-if="task.folder_name || task.document_title"> · {{ task.folder_name || task.document_title }}</template><template v-if="task.sender_name"> · {{ task.sender_name }}</template></small></span><span v-if="task.due_at" class="task-date" :class="{ overdue: overdue(task) }"><Clock3 :size="12" /> {{ date(task.due_at) }}</span><ArrowRight :size="15" /></button><div v-if="!summary.tasks.length" class="start-empty"><CheckCircle2 :size="27" /><strong>Lista zadań jest czysta</strong><p>Nowe zadania pojawią się tutaj.</p></div></section><section class="panel start-list survey-list"><header><div><span class="section-label">CZEKAMY NA TWÓJ GŁOS</span><h2>Ankiety dla Ciebie</h2></div><ClipboardCheck :size="20" /></header><button v-for="survey in summary.surveys.slice(0, 4)" :key="survey.id" class="start-survey" :disabled="busy" @click="emit('survey', survey)"><span><strong>{{ survey.title }}</strong><small>{{ survey.question_count }} pytań · {{ survey.owner_name }}</small></span><ArrowUpRight :size="17" /></button><div v-if="!summary.surveys.length" class="start-empty"><CheckCircle2 :size="27" /><strong>Nic nie czeka na odpowiedź</strong><p>Gdy otrzymasz ankietę, zobaczysz ją tutaj.</p></div><footer><button class="text-link" :disabled="busy" @click="emit('navigate', 'ai')"><Mail :size="15" /> Sprawdź wiadomości <ArrowRight :size="14" /></button></footer></section></div>
+    <div class="start-hero compact-hero">
+      <div class="ai-controls">
+        <button class="ai-avatar edzio-avatar" :disabled="busy" aria-label="Porozmawiaj z Edziem, asystentem AI" @click="openCommand"><svg viewBox="0 0 64 64" fill="none" aria-hidden="true"><path d="M32 13V7" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="32" cy="6" r="3" fill="currentColor"/><rect x="9" y="15" width="46" height="39" rx="16" fill="var(--surface)" stroke="currentColor" stroke-width="2.5"/><path d="M9 29H5V39H9M55 29H59V39H55" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><g class="edzio-face-default"><path d="M20 29Q24 25 28 29M36 29Q40 25 44 29" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M24 39Q32 48 40 39" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></g><ellipse cx="18" cy="37" rx="4" ry="2.5" fill="currentColor" opacity=".15"/><ellipse cx="46" cy="37" rx="4" ry="2.5" fill="currentColor" opacity=".15"/></svg><span>Edzio</span></button>
+        <button class="ai-microphone" :disabled="busy" aria-label="Powiedz Edziowi, co ma zrobić" title="Powiedz Edziowi, co ma zrobić" @click="openCommand(); dictate()"><Mic :size="20" /></button>
+      </div>
+      <div class="ai-speech"><p class="edzio-remark">{{ dailyGreeting.title }}</p><p>{{ dailyGreeting.description }}</p><p class="edzio-instruction"><Mic :size="14" aria-hidden="true" /> Wciśnij mikrofon i powiedz, co mogę dla Ciebie zrobić.</p></div>
+    </div>
+    <div class="shortcuts-heading"><h2>Wszystko pod ręką</h2></div>
+    <div class="start-cards quick-cards">
+      <button class="panel start-card calendar-summary" :disabled="busy" @click="emit('navigate', 'calendar')"><div class="summary-top"><span class="summary-icon"><CalendarDays :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Terminarz</h2><p>Twoje zadania w kalendarzu.</p><span class="summary-link">Otwórz kalendarz <ArrowRight :size="14" /></span></button>
+      <button class="panel start-card task-summary" :disabled="busy" @click="emit('navigate', 'tasks')"><div class="summary-top"><span class="summary-icon"><ListTodo :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Zadania ({{ summary.tasks.length }})</h2><p>Sprawdź zadania czekające na wykonanie.</p><span class="summary-link">Otwórz zadania <ArrowRight :size="14" /></span></button>
+      <button class="panel start-card drive-summary" :disabled="busy" @click="emit('navigate', 'drive')"><div class="summary-top"><span class="summary-icon"><HardDrive :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Dysk</h2><p>Twoje dokumenty, pliki i katalogi.</p><span class="summary-link">Otwórz dysk <ArrowRight :size="14" /></span></button>
+      <button class="panel start-card survey-summary" :disabled="busy" @click="emit('navigate', 'surveys')"><div class="summary-top"><span class="summary-icon"><ClipboardCheck :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Ankieta</h2><p>{{ summary.surveys.length }} ankiet czeka na Twoją odpowiedź.</p><span class="summary-link">Otwórz ankiety <ArrowRight :size="14" /></span></button>
+    </div>
+    <dialog ref="commandDialog" class="panel start-ai-dialog modern-ai-dialog" aria-labelledby="start-ai-title" @close="stopDictation" @cancel="assistantBusy && $event.preventDefault()" @click="closeOnBackdrop">
+      <header class="start-ai-heading"><span class="dialog-avatar" aria-hidden="true"><Bot :size="27" /></span><div><span class="hero-label">Edzio do usług</span><h2 id="start-ai-title">Co dziś ogarniamy?</h2><p>Spotkanie, wiadomość, dokument? Powiedz mi jednym zdaniem.</p></div><button type="button" class="icon-button" :disabled="assistantBusy" aria-label="Zamknij rozmowę z Edziem" @click="commandDialog.close()"><X :size="20" /></button></header>
+      <div class="start-ai-body">
+        <form v-if="!assistantPlan" class="start-command" @submit.prevent="submitCommand">
+          <div class="assistant-examples" aria-label="Przykładowe polecenia"><button type="button" :disabled="assistantBusy || listening" @click="useExample('Zaplanuj spotkanie jutro o 9:00.')"><CalendarDays :size="14" /> Spotkanie</button><button type="button" :disabled="assistantBusy || listening" @click="useExample('Przygotuj wiadomość do zespołu: ')"><ArrowUpRight :size="14" /> Wiadomość</button><button type="button" :disabled="assistantBusy || listening" @click="useExample('Zrób dokument: oferta dla naszych pracowników.')"><ClipboardCheck :size="14" /> Dokument</button></div>
+          <div class="assistant-composer">
+          <label for="start-ai-command">Twoje polecenie</label>
+          <textarea id="start-ai-command" autofocus v-model="command" @input="voiceError = ''" rows="4" maxlength="6000" :disabled="busy || assistantBusy || listening" placeholder="Napisz, co mam zrobić… albo wciśnij mikrofon i powiedz." />
+          <div class="start-command-actions"><button type="button" class="dialog-microphone" :class="{ recording: listening }" :disabled="busy || assistantBusy" :aria-pressed="listening" :aria-label="listening ? 'Zatrzymaj dyktowanie' : 'Dyktuj polecenie'" @click="dictate"><Square v-if="listening" :size="17" /><Mic v-else :size="17" /> {{ listening ? 'Zatrzymaj' : 'Dyktuj' }}</button><button class="primary prepare-command" type="submit" :disabled="busy || assistantBusy || listening || !command.trim()">{{ assistantBusy ? 'Przygotowuję…' : 'Przygotuj' }} <ArrowRight :size="15" /></button></div>
+          </div><p v-if="listening" class="listening-status" role="status"><span></span> Słucham Cię…</p><p v-else class="assistant-footnote">Najpierw przygotuję podgląd. Ty zdecydujesz, co zapisać lub wysłać.</p>
+          <p v-if="voiceError" class="error" role="alert">{{ voiceError }}</p>
+        </form>
+        <p v-if="assistantReply" class="assistant-reply" role="status">{{ assistantReply }}</p>
+        <p v-if="assistantError" class="error" role="alert">{{ assistantError }}</p>
+        <form v-if="assistantPlan" class="start-command assistant-plan" @submit.prevent="scheduleTask">
+          <h3>{{ assistantPlan.action === 'meeting' ? 'Spotkanie w Twoim terminarzu' : 'Twoje nowe zadanie' }}</h3>
+          <label>Tytuł<input v-model="assistantPlan.title" maxlength="200" required :disabled="assistantBusy" /></label>
+          <label>Opis<textarea v-model="assistantPlan.description" maxlength="5000" rows="3" :disabled="assistantBusy" /></label>
+          <label>Data i godzina (czas urządzenia)<input v-model="assistantPlan.due_input" type="datetime-local" :required="assistantPlan.action === 'meeting'" :disabled="assistantBusy" /></label>
+          <p class="assistant-hint">Zapiszę wpis na Twojej liście zadań i w terminarzu. Zaproszenia do innych osób możesz przygotować osobnym poleceniem.</p>
+          <div class="start-command-actions"><button type="button" :disabled="assistantBusy" @click="assistantPlan = null; assistantReply = ''; assistantError = ''">Zmień polecenie</button><button class="primary" type="submit" :disabled="assistantBusy || !assistantPlan.title.trim() || (assistantPlan.action === 'meeting' && !assistantPlan.due_input)">{{ assistantBusy ? 'Zapisywanie…' : 'Zapisz w terminarzu' }}</button></div>
+        </form>
+      </div>
+    </dialog>
   </section>
 </template>
 <style scoped>
-.start-welcome { display:flex; justify-content:space-between; gap:20px; align-items:center; margin:28px 0; }.start-date { color:var(--muted); font-size:12px; text-transform:capitalize; }.start-welcome h1 { font-size:29px; margin:10px 0 8px; }.hello-wave { color:var(--accent); font-size:23px; margin-left:5px; }.start-welcome p { margin:0; color:var(--muted); font-size:13px; }.start-hero { position:relative; overflow:hidden; display:grid; grid-template-columns:1.6fr 1fr; border:1px solid var(--hero-border); background:var(--hero-bg); border-radius:24px; padding:36px 40px; gap:20px; margin-bottom:24px; }.hero-copy { z-index:1; }.hero-label { display:flex; align-items:center; gap:7px; font-size:10px; letter-spacing:1.6px; font-weight:600; color:var(--accent); }.hero-copy h2 { font-size:28px; line-height:1.3; letter-spacing:-.8px; margin:18px 0 12px; max-width:400px; }.hero-copy p { color:var(--secondary); font-size:13px; line-height:1.8; max-width:400px; }.hero-copy p strong { color:var(--accent); }.hero-copy button { margin-top:10px; font-size:12px; background:var(--surface); border-color:var(--hero-border); }.robot-art { position:relative; display:flex; align-items:center; justify-content:center; flex-direction:column; min-height:220px; }.robot-body { width:155px; height:155px; background:var(--surface); border:1px solid var(--hero-border); border-radius:42px; display:grid; place-items:center; color:var(--accent); transform:rotate(-7deg); box-shadow:0 15px 40px var(--robot-shadow); z-index:1; position:relative; }.robot-status { position:absolute; width:18px; height:18px; border:4px solid var(--surface); border-radius:50%; background:var(--success); right:13px; bottom:13px; }.robot-orbit { position:absolute; border:1px dashed var(--hero-border); border-radius:50%; }.orbit-one { width:235px; height:235px; }.orbit-two { width:290px; height:290px; opacity:.5; }.robot-spark { position:absolute; color:var(--accent); }.spark-one { top:5px; right:25px; transform:rotate(12deg); }.spark-two { left:25px; bottom:55px; font-size:27px; }.robot-caption { display:flex; gap:6px; align-items:center; z-index:1; margin-top:20px; padding:7px 11px; background:var(--surface); border-radius:20px; color:var(--secondary); font-size:10px; }.robot-caption > span { width:5px; height:5px; background:var(--success); border-radius:50%; }.start-cards { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-bottom:26px; }.start-card { display:block; padding:24px; text-align:left; border-radius:18px; transition:transform .15s,border-color .15s; }.start-card:hover { transform:translateY(-3px); border-color:var(--accent); background:var(--surface); }.summary-top { display:flex; align-items:center; justify-content:space-between; color:var(--muted); }.summary-icon { display:grid; place-items:center; width:47px; height:47px; background:var(--accent-soft); color:var(--accent); border-radius:13px; }.folder-summary .summary-icon { background:var(--warning-soft); color:var(--warning); }.file-summary .summary-icon { background:var(--success-soft); color:var(--success); }.start-card > strong { display:block; font-size:37px; margin:23px 0 8px; font-weight:600; letter-spacing:-1px; }.start-card h2 { font-size:14px; margin:0; font-weight:500; }.start-card p { font-size:11px; color:var(--muted); line-height:1.7; margin:9px 0 20px; }.summary-link { display:flex; align-items:center; justify-content:space-between; font-size:11px; color:var(--accent); padding-top:15px; border-top:1px solid var(--border); }.start-bottom { display:grid; grid-template-columns:1.45fr 1fr; gap:20px; }.start-list { border-radius:18px; padding:23px; }.start-list header { display:flex; justify-content:space-between; align-items:center; gap:14px; margin-bottom:14px; }.section-label { font-size:9px; letter-spacing:1.2px; color:var(--muted); }.start-list h2 { margin:8px 0 0; font-size:18px; }.text-link { font-size:11px; color:var(--accent); border:0; padding:0; background:transparent; }.start-task { display:flex; width:100%; text-align:left; padding:17px 0; border:0; border-radius:0; background:transparent; border-top:1px solid var(--border); gap:12px; justify-content:flex-start; }.task-mark { padding:10px; border-radius:11px; background:var(--surface-soft); color:var(--secondary); display:flex; }.task-description { flex:1; min-width:0; }.task-description strong,.start-survey strong { font-size:12px; font-weight:500; overflow-wrap:anywhere; }.task-description small,.start-survey small { display:block; color:var(--muted); font-size:10px; margin-top:6px; line-height:1.6; }.task-date { display:flex; gap:5px; align-items:center; font-size:10px; color:var(--muted); white-space:nowrap; }.task-date.overdue { color:var(--danger); }.start-task > svg,.survey-list header > svg { color:var(--muted); }.start-survey { width:100%; display:flex; justify-content:space-between; gap:12px; text-align:left; padding:18px 0; border:0; border-top:1px solid var(--border); border-radius:0; background:transparent; }.start-survey > svg { color:var(--accent); flex-shrink:0; }.start-empty { padding:30px 10px; display:flex; flex-direction:column; align-items:center; text-align:center; color:var(--success); }.start-empty strong { color:var(--secondary); font-size:12px; font-weight:500; margin-top:12px; }.start-empty p { color:var(--muted); font-size:11px; line-height:1.6; }.survey-list footer { border-top:1px solid var(--border); padding-top:17px; }
-@media(max-width:800px) { .start-hero { padding:28px; grid-template-columns:1.5fr 1fr; }.hero-copy h2 { font-size:24px; }.robot-body { width:125px; height:125px; border-radius:32px; }.robot-body svg { width:85px; }.start-bottom { grid-template-columns:1fr; }.start-card { padding:18px; } }@media(max-width:580px) { .start-hero { grid-template-columns:1fr; padding:26px; }.robot-art { min-height:140px; position:absolute; right:-35px; top:-25px; opacity:.15; }.robot-caption { display:none; }.hero-copy { padding-right:15px; }.start-cards { grid-template-columns:1fr; gap:12px; }.start-card { position:relative; padding:20px 22px; }.start-card > strong { position:absolute; right:22px; top:10px; font-size:32px; }.summary-top > svg { display:none; }.start-card h2 { margin-top:14px; }.start-card p { margin-bottom:14px; }.start-welcome h1 { font-size:25px; }.start-list { padding:19px; }.start-task { gap:8px; } }
+.start-page { padding-top:24px; }
+.start-hero { position:relative; isolation:isolate; overflow:hidden; display:grid; grid-template-columns:minmax(0,1.6fr) minmax(220px,1fr); gap:8px 32px; border:1px solid var(--hero-border); background:var(--hero-bg); border-radius:28px; padding:24px 36px 36px; margin-bottom:32px; }
+.start-hero::before { content:''; position:absolute; z-index:-1; width:420px; height:420px; right:-110px; bottom:-170px; background:radial-gradient(circle,var(--accent-soft),transparent 70%); border-radius:50%; }
+.hero-toolbar { grid-column:1/-1; display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:10px; }
+.hero-label { display:flex; align-items:center; gap:8px; font-size:10px; letter-spacing:1.3px; font-weight:600; color:var(--accent); }
+.hero-toolbar .icon-button { background:transparent; border-color:var(--hero-border); border-radius:50%; flex-shrink:0; }
+.hero-copy { position:relative; z-index:1; }
+.hero-copy h1 { font-size:clamp(25px,3.2vw,37px); line-height:1.2; letter-spacing:-1.2px; margin:14px 0 16px; max-width:520px; }
+.hero-copy > p { color:var(--secondary); font-size:14px; line-height:1.8; max-width:470px; margin:0 0 24px; }
+.hero-action { min-height:52px; border-radius:14px; padding:14px 20px; font-size:14px; box-shadow:0 8px 24px var(--robot-shadow); }
+.hero-action > svg:last-child { margin-left:12px; }
+.hero-suggestions { display:flex; flex-wrap:wrap; gap:8px; margin-top:22px; }
+.hero-suggestions > span { width:100%; font-size:10px; color:var(--muted); margin-bottom:2px; }
+.hero-suggestions button { font-size:11px; padding:8px 10px; border-radius:20px; background:var(--surface); border-color:var(--hero-border); }
+.robot-art { position:relative; display:flex; align-items:center; justify-content:center; flex-direction:column; min-height:285px; }
+.robot-body { width:166px; height:166px; background:var(--surface); border:1px solid var(--hero-border); border-radius:46px; display:grid; place-items:center; color:var(--accent); box-shadow:0 18px 45px var(--robot-shadow); z-index:1; position:relative; animation:robot-float 5s ease-in-out infinite; }
+.robot-status { position:absolute; width:19px; height:19px; border:4px solid var(--surface); border-radius:50%; background:var(--success); right:15px; bottom:15px; }
+.robot-orbit { position:absolute; border:1px dashed var(--hero-border); border-radius:50%; }
+.orbit-one { width:235px; height:235px; }.orbit-two { width:295px; height:295px; opacity:.6; }
+.robot-spark { position:absolute; color:var(--accent); }.spark-one { top:24px; right:16px; transform:rotate(12deg); }.spark-two { left:18px; bottom:54px; font-size:30px; }
+.robot-bubble { z-index:2; background:var(--surface); color:var(--secondary); border:1px solid var(--hero-border); border-radius:16px 16px 3px 16px; padding:10px 15px; font-size:11px; position:absolute; top:4px; left:0; transform:rotate(-5deg); }
+.robot-caption { display:flex; gap:7px; align-items:center; z-index:1; margin-top:20px; padding:8px 12px; background:var(--surface); border-radius:20px; color:var(--secondary); font-size:10px; }
+.robot-caption > span { width:6px; height:6px; background:var(--success); border-radius:50%; }
+.shortcuts-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:16px; }.shortcuts-heading h2 { margin:0; font-size:17px; }.shortcuts-heading > span { color:var(--muted); font-size:11px; }
+.start-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; margin-bottom:26px; }
+.start-card { position:relative; overflow:hidden; display:flex; flex-direction:column; align-items:stretch; padding:25px; text-align:left; border-radius:20px; transition:transform .18s,box-shadow .18s,border-color .18s; --card-color:var(--accent); --card-soft:var(--accent-soft); background:linear-gradient(155deg,var(--card-soft),var(--surface) 55%); }
+.start-card::before { content:''; height:3px; position:absolute; top:0; left:24px; right:24px; background:var(--card-color); opacity:.6; border-radius:0 0 8px 8px; }
+.start-card:hover { transform:translateY(-4px); border-color:var(--card-color); box-shadow:0 10px 26px var(--robot-shadow); background:linear-gradient(155deg,var(--card-soft),var(--surface) 65%); }
+.task-summary { --card-color:var(--warning); --card-soft:var(--warning-soft); }.drive-summary { --card-color:var(--success); --card-soft:var(--success-soft); }
+.summary-top { display:flex; align-items:center; justify-content:space-between; color:var(--muted); }
+.summary-icon { display:grid; place-items:center; width:50px; height:50px; background:var(--card-soft); color:var(--card-color); border-radius:15px; }
+.start-card h2 { font-size:20px; margin:22px 0 0; font-weight:600; }.start-card p { font-size:12px; color:var(--muted); line-height:1.7; margin:10px 0 24px; flex:1; }
+.summary-link { display:flex; align-items:center; justify-content:space-between; font-size:11px; color:var(--card-color); padding-top:16px; border-top:1px solid var(--border); }
+.start-command { display:flex; flex-direction:column; gap:10px; }.start-command label { font-size:12px; color:var(--secondary); }.start-command textarea { width:100%; box-sizing:border-box; resize:vertical; min-height:130px; font:inherit; }
+.start-command-actions { display:flex; flex-wrap:wrap; gap:10px; }.start-command-actions button { min-height:44px; }.start-command p { margin:0; }.start-command .error { color:var(--danger); }
+.start-ai-dialog { width:min(620px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); padding:0; margin:auto; box-sizing:border-box; border:1px solid var(--border); border-radius:20px; color:var(--text); background:var(--surface); overflow:auto; }.start-ai-dialog::backdrop { background:rgba(15,23,42,.5); }
+.start-ai-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; padding:24px; border-bottom:1px solid var(--border); }.start-ai-heading h2 { margin:12px 0 8px; font-size:22px; }.start-ai-heading p { margin:0; color:var(--muted); font-size:13px; }.start-ai-body { padding:24px; }
+@keyframes robot-float { 0%,100% { transform:translateY(0) rotate(-6deg); } 50% { transform:translateY(-8px) rotate(-2deg); } }
+@media(max-width:800px) { .start-hero { padding:22px 26px 28px; gap:12px; grid-template-columns:minmax(0,1.5fr) minmax(180px,1fr); }.robot-body { width:135px; height:135px; border-radius:36px; }.robot-body svg { width:90px; }.orbit-one { width:190px; height:190px; }.orbit-two { width:240px; height:240px; }.robot-bubble { font-size:10px; top:12px; }.start-card { padding:20px; } }
+@media(max-width:580px) { .start-page { padding-top:16px; }.start-hero { grid-template-columns:1fr; padding:18px 22px 24px; border-radius:22px; }.hero-toolbar { gap:8px; }.hero-label { font-size:9px; letter-spacing:.7px; }.hero-copy h1 { margin-top:8px; }.hero-copy > p { font-size:13px; }.hero-action { width:100%; }.robot-art { min-height:185px; margin-top:18px; }.robot-body { width:112px; height:112px; border-radius:30px; }.robot-body svg { width:76px; }.orbit-one { width:155px; height:155px; }.orbit-two { width:195px; height:195px; }.robot-bubble { top:0; left:calc(50% - 135px); }.robot-caption { margin-top:14px; }.spark-one { right:calc(50% - 115px); top:26px; }.spark-two { left:calc(50% - 110px); bottom:35px; }.shortcuts-heading { align-items:flex-start; flex-direction:column; gap:5px; }.start-cards { grid-template-columns:1fr; gap:12px; }.start-card { padding:20px; }.start-card h2 { margin-top:16px; }.start-ai-heading,.start-ai-body { padding:18px; }.start-command-actions button { flex:1; } }
+@media(prefers-reduced-motion:reduce) { .robot-body { animation:none; }.start-card { transition:none; }.start-card:hover { transform:none; } }
+.ai-speech { position:relative; background:var(--surface); border:1px solid var(--hero-border); border-radius:24px 24px 5px 24px; padding:24px 26px; margin:4px 0 24px; box-shadow:0 12px 32px var(--robot-shadow); }
+.ai-speech::after { content:''; position:absolute; right:-10px; top:88px; width:18px; height:18px; background:var(--surface); border-right:1px solid var(--hero-border); border-bottom:1px solid var(--hero-border); transform:rotate(-45deg); }
+.speech-speaker { display:flex; align-items:center; gap:7px; color:var(--accent); font-size:11px; font-weight:600; }
+.speech-dot { width:5px; height:5px; border-radius:50%; background:var(--success); margin-left:2px; }
+.ai-speech h1 { font-size:clamp(24px,2.8vw,33px); margin:16px 0 12px; }
+.ai-speech p { color:var(--secondary); font-size:14px; line-height:1.8; margin:0; }
+.speech-invitation { display:block; color:var(--accent); font-size:12px; line-height:1.6; margin-top:18px; }
+@media(max-width:800px) { .ai-speech { padding:22px; }.ai-speech p { font-size:13px; } }
+@media(max-width:580px) {
+  .hero-toolbar { grid-row:1; }
+  .robot-art { grid-row:2; min-height:160px; margin:0 0 14px; }
+  .hero-copy { grid-row:3; }
+  .ai-speech { border-radius:20px; padding:22px; margin:0 0 20px; }
+  .ai-speech::after { top:-10px; right:auto; left:calc(50% - 9px); transform:rotate(225deg); }
+  .ai-speech h1 { font-size:25px; margin-top:16px; }
+  .robot-caption { display:none; }
+}
+/* Assistant panel: avatar and microphone on the left, message on the right. */
+.compact-hero { display:grid; grid-template-columns:106px minmax(0,1fr); gap:26px; align-items:center; padding:22px 26px; margin:0 0 26px; background:var(--surface); border:1px solid var(--border); border-radius:20px; overflow:visible; }
+.compact-hero::before { display:none; }
+.ai-controls { position:relative; width:106px; padding-bottom:12px; display:flex; justify-content:center; }
+.ai-avatar { display:flex; flex-direction:column; gap:3px; width:96px; height:96px; padding:12px; border:1px solid var(--hero-border); border-radius:30px; background:var(--accent-soft); color:var(--accent); }.ai-avatar > svg { width:50px; height:50px; }
+.ai-avatar span { font-size:9px; font-weight:700; letter-spacing:1px; }
+.ai-microphone { position:absolute; right:-2px; bottom:0; width:42px; height:42px; padding:0; border:3px solid var(--surface); border-radius:50%; color:var(--accent); background:var(--surface); box-shadow:0 3px 10px var(--robot-shadow); }
+.compact-hero .ai-speech { width:100%; min-width:0; box-sizing:border-box; text-align:left; padding:0; margin:0; background:transparent; border:0; border-radius:0; box-shadow:none; }
+.compact-hero .ai-speech::after { display:none; }
+.compact-hero .ai-speech h1 { font-size:18px; font-weight:500; color:var(--secondary); line-height:1.5; letter-spacing:-.2px; margin:0 0 6px; }
+.compact-hero .ai-speech p { font-size:12px; color:var(--muted); line-height:1.8; margin:0; max-width:650px; }
+.shortcuts-heading { margin-bottom:12px; }.shortcuts-heading h2 { font-size:14px; font-weight:500; color:var(--secondary); }
+.start-cards { gap:14px; }
+.start-card { padding:18px; border-radius:15px; background:var(--surface); transition:border-color .15s; }
+.start-card::before { display:none; }.start-card:hover { transform:none; box-shadow:none; background:var(--surface); }
+.summary-icon { width:38px; height:38px; border-radius:11px; }.summary-icon svg { width:20px; height:20px; }
+.start-card h2 { font-size:17px; margin-top:15px; }.start-card p { font-size:11px; margin:8px 0 16px; }.summary-link { font-size:10px; padding-top:12px; }
+@media(max-width:580px) {
+  .compact-hero { grid-template-columns:76px minmax(0,1fr); gap:16px; padding:18px 16px; margin-bottom:20px; align-items:center; border-radius:16px; }
+  .ai-controls { width:76px; padding-top:0; }.ai-avatar { width:72px; height:76px; padding:8px; border-radius:22px; }.ai-avatar > svg { width:42px; height:42px; }.ai-microphone { width:40px; height:40px; }
+  .compact-hero .ai-speech { padding:0; border-radius:0; }
+  .compact-hero .ai-speech h1 { font-size:17px; margin:0 0 6px; }.compact-hero .ai-speech p { font-size:12px; }
+  .start-card { padding:16px; }
+}
+.edzio-avatar > svg { width:58px; height:58px; }
+.edzio-avatar span { text-transform:none; letter-spacing:.3px; font-size:10px; }
+.edzio-introduction { display:block; font-size:11px; color:var(--muted); margin-bottom:16px; }
+.compact-hero .ai-speech .edzio-remark { font-size:14px; font-weight:500; color:var(--secondary); margin-bottom:5px; }
+@media(max-width:580px) { .edzio-avatar > svg { width:42px; height:42px; }.edzio-introduction { margin-bottom:12px; } }
+
+
+
+
+
+.compact-hero .ai-speech .edzio-instruction { display:flex; align-items:center; justify-content:flex-start; gap:6px; margin-top:14px; font-size:11px; color:var(--accent); }
+.edzio-instruction svg { flex-shrink:0; }
+
+.quick-cards { grid-template-columns:repeat(4,minmax(0,1fr)); }
+@media(max-width:900px) { .quick-cards { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:580px) { .quick-cards { grid-template-columns:1fr; } }
+.assistant-reply { font-size:13px; color:var(--accent); line-height:1.7; margin:16px 0; }.assistant-plan h3 { font-size:16px; margin:8px 0; }.assistant-plan label { display:flex; flex-direction:column; gap:7px; }.assistant-hint { font-size:11px; line-height:1.7; color:var(--muted); }
+.modern-ai-dialog { width:min(620px,calc(100vw - 32px)); border-radius:24px; box-shadow:0 24px 80px rgba(15,23,42,.22); }
+.modern-ai-dialog::backdrop { background:rgba(15,23,42,.35); backdrop-filter:blur(4px); }
+.modern-ai-dialog .start-ai-heading { padding:26px 26px 22px; gap:14px; background:linear-gradient(140deg,var(--accent-soft),var(--surface) 70%); border-bottom:0; }
+.dialog-avatar { display:grid; place-items:center; width:48px; height:48px; flex-shrink:0; border-radius:16px; color:var(--accent); background:var(--surface); border:1px solid var(--hero-border); }
+.modern-ai-dialog .start-ai-heading > div { flex:1; min-width:0; }.modern-ai-dialog .hero-label { font-size:10px; letter-spacing:.6px; }
+.modern-ai-dialog .start-ai-heading h2 { font-size:22px; letter-spacing:-.5px; margin:7px 0 8px; }.modern-ai-dialog .start-ai-heading p { font-size:12px; line-height:1.6; max-width:370px; }
+.modern-ai-dialog .start-ai-heading > button { border:0; background:transparent; padding:6px; color:var(--muted); border-radius:50%; }
+.modern-ai-dialog .start-ai-body { padding:8px 26px 26px; }
+.assistant-examples { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 5px; }.assistant-examples button { font-size:11px; padding:8px 11px; border-radius:20px; color:var(--secondary); }
+.assistant-composer { background:var(--surface-soft); border:1px solid var(--border); border-radius:17px; padding:16px; display:flex; flex-direction:column; gap:10px; transition:border-color .15s; }
+.assistant-composer:focus-within { border-color:var(--accent); }.assistant-composer > label { color:var(--muted); font-size:10px; }
+.modern-ai-dialog .assistant-composer textarea { border:0; border-radius:0; background:transparent; box-shadow:none; padding:0; outline:none; min-height:110px; font-size:14px; line-height:1.7; color:var(--text); }
+.modern-ai-dialog .assistant-composer textarea::placeholder { color:var(--muted); font-size:13px; }
+.assistant-composer .start-command-actions { justify-content:space-between; align-items:center; padding-top:12px; border-top:1px solid var(--border); }
+.dialog-microphone { font-size:12px; border-radius:11px; }.dialog-microphone.recording { color:var(--danger); border-color:var(--danger); background:var(--surface); }
+.prepare-command { font-size:12px; border-radius:11px; padding:11px 18px; }
+.modern-ai-dialog .assistant-footnote { font-size:10px; color:var(--muted); line-height:1.7; padding:3px 4px; }
+.listening-status { display:flex; align-items:center; gap:7px; font-size:11px; color:var(--accent); padding:3px 4px; }.listening-status > span { width:6px; height:6px; border-radius:50%; background:var(--accent); }
+.modern-ai-dialog .error { font-size:12px; line-height:1.6; border-radius:12px; }
+.modern-ai-dialog .assistant-plan { background:var(--surface-soft); border:1px solid var(--border); padding:18px; border-radius:17px; }
+@media(max-width:580px) {
+  .modern-ai-dialog { width:calc(100vw - 24px); border-radius:20px; }
+  .modern-ai-dialog .start-ai-heading { padding:20px 18px 18px; gap:10px; }.dialog-avatar { width:38px; height:38px; border-radius:12px; }.dialog-avatar svg { width:23px; }
+  .modern-ai-dialog .start-ai-heading h2 { font-size:20px; }.modern-ai-dialog .start-ai-body { padding:6px 18px 20px; }
+  .assistant-composer { padding:14px; }.assistant-examples { gap:6px; }.assistant-examples button { font-size:10px; padding:7px 9px; }
+}
 </style>

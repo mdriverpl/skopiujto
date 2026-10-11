@@ -1,8 +1,9 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { Sparkles, Send, RefreshCw, Check, Mail, Plus, X, Search } from 'lucide-vue-next'
-const props = defineProps({ api: Function })
-const prompt = ref(''), source = ref('both'), dictionaryId = ref(''), channel = ref('auto')
+const props = defineProps({ api: Function, initialPrompt: { type: String, default: '' } })
+const emit = defineEmits(['prompt-consumed'])
+const prompt = ref(props.initialPrompt), source = ref('both'), dictionaryId = ref(''), channel = ref('auto')
 const options = ref(null), busy = ref(false), error = ref(''), notice = ref(''), plan = ref(null), chosen = ref([])
 const tab = ref('all'), messages = ref([]), history = ref([])
 const compose = ref(''), subject = ref(''), body = ref(''), contacts = ref([]), selected = ref([]), contactSearch = ref('')
@@ -92,7 +93,14 @@ async function markRead(item) {
   catch (err) { error.value = err.message }
   finally { busy.value = false }
 }
-onMounted(() => { load(); timer = setInterval(() => { if (!busy.value) load() }, 15000) })
+onMounted(async () => {
+  const fromAssistant = !!props.initialPrompt
+  if (fromAssistant) { openCompose('ai'); emit('prompt-consumed') }
+  await load()
+  if (disposed) return
+  if (fromAssistant && compose.value === 'ai' && options.value?.ai.available) await prepare()
+  if (!disposed) timer = setInterval(() => { if (!busy.value) load() }, 15000)
+})
 onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
 </script>
 
