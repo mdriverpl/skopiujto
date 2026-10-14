@@ -53,8 +53,11 @@ def differences(before, after, fields):
 
 def record(con, current, kind, row, action, changes=None):
     row = dict(row)
+    mode = current.get('impersonation')
+    actor_id = mode['actor_id'] if mode else current['id']
+    actor_name = f"{mode['actor_name']} (na koncie: {current['name']})" if mode else current['name']
     con.execute('INSERT INTO resource_history(kind,resource_id,owner_id,resource_name,actor_id,actor_name,action,changes,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
-        (kind, row['id'], row.get('user_id'), row.get('title') or row.get('name') or row['id'], current['id'], current['name'], action,
+        (kind, row['id'], row.get('user_id'), row.get('title') or row.get('name') or row['id'], actor_id, actor_name, action,
          json.dumps(changes or [], ensure_ascii=False), datetime.now(timezone.utc).isoformat()))
 
 def updated(con, current, kind, before, fields, action='Zmieniono'):

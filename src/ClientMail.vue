@@ -132,7 +132,7 @@ onMounted(() => run(load))
           </article>
           <div v-if="!filtered.length" class="mail-list-empty"><Inbox :size="35" /><h2>{{ busy ? 'Wczytywanie poczty…' : 'Brak wiadomości' }}</h2><p>{{ messages.length ? 'Zmień folder, filtr lub wyszukiwanie.' : 'Importuj wiadomość .eml lub napisz pierwszego maila.' }}</p><button v-if="!messages.length" :disabled="busy" @click="importInput.click()"><Upload :size="16" /> Importuj .eml</button></div>
         </div>
-        <nav class="mail-folders" aria-label="Foldery poczty"><button v-for="item in folders" :key="item.id" :class="{ active: folder === item.id }" :aria-current="folder === item.id ? 'page' : undefined" @click="changeFolder(item.id)"><component :is="item.icon" :size="19" /><span>{{ item.label }}</span><small v-if="messages.filter(m => m.folder === item.id).length">{{ messages.filter(m => m.folder === item.id).length }}</small></button></nav>
+        <nav class="mail-folders page-menu" aria-label="Foldery poczty"><button v-for="item in folders" :key="item.id" :class="{ active: folder === item.id }" :aria-current="folder === item.id ? 'page' : undefined" @click="changeFolder(item.id)"><component :is="item.icon" :size="19" /><span>{{ item.label }}</span><small v-if="messages.filter(m => m.folder === item.id).length">{{ messages.filter(m => m.folder === item.id).length }}</small></button></nav>
       </aside>
       <section class="mail-reader" aria-label="Podgląd wiadomości">
         <template v-if="selected">

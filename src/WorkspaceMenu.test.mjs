@@ -37,6 +37,8 @@ test('stored order ignores invalid and duplicate entries and includes new menu i
   const { state } = menu(new Map([['edokumenty-menu-order:me', JSON.stringify(['notes', 'start'])]]))
   assert.equal(state.items.value[0].id, 'notes')
   assert.equal(state.items.value.some(item => item.id === 'admin'), false)
+  assert.equal(state.items.value.some(item => item.id === 'companies'), false)
+  assert.equal(menu(new Map(), { id: 'super', role: 'admin', is_superadmin: true }).state.items.value.some(item => item.id === 'companies'), true)
   assert.equal(state.active('notes'), true)
   assert.equal(state.active('start'), false)
 })

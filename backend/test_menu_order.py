@@ -8,7 +8,7 @@ from backend.test_access import ADMIN, READER, create_reader, login
 def test_menu_order_persists_on_account_across_sessions_and_initialization(app_client):
     main, client = app_client
     assert client.get('/api/me').json()['menu_order'] == []
-    order = ['notes', 'documents', 'start', 'drive']
+    order = ['help', 'edelivery', 'notes', 'documents', 'start', 'drive']
     response = client.put('/api/me/menu-order', json={'menu_order': order})
     assert response.status_code == 200 and response.json()['menu_order'] == order
     with main.db() as con:

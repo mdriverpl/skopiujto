@@ -1,15 +1,62 @@
 import json
 import smtplib
 import pytest
+from cryptography.fernet import Fernet
+from fastapi import HTTPException
 from backend import mail_settings, mailer
 from backend.test_storage import app_client
 from backend.test_access import ADMIN, READER, create_reader, login
 
 
 @pytest.fixture(autouse=True)
-def encryption_key(monkeypatch, tmp_path):
-    monkeypatch.delenv('EDOCUMENTS_MAIL_SETTINGS_KEY', raising=False)
-    monkeypatch.setattr(mail_settings, 'KEY_FILE', tmp_path / 'mail.key')
+def encryption_key(monkeypatch):
+    monkeypatch.setenv('EDOCUMENTS_MAIL_SETTINGS_KEY', Fernet.generate_key().decode())
+
+
+@pytest.mark.parametrize('value', [None, '', '   '])
+def test_cipher_requires_environment_key(monkeypatch, tmp_path, value):
+    legacy_file = tmp_path / 'mail-settings.key'
+    legacy_key = Fernet.generate_key()
+    legacy_file.write_bytes(legacy_key)
+    monkeypatch.setattr(mail_settings, 'KEY_FILE', legacy_file, raising=False)
+    if value is None:
+        monkeypatch.delenv('EDOCUMENTS_MAIL_SETTINGS_KEY', raising=False)
+    else:
+        monkeypatch.setenv('EDOCUMENTS_MAIL_SETTINGS_KEY', value)
+    with pytest.raises(HTTPException) as error:
+        mail_settings.cipher()
+    assert error.value.status_code == 503
+    assert 'EDOCUMENTS_MAIL_SETTINGS_KEY' in error.value.detail
+    assert legacy_file.read_bytes() == legacy_key
+
+
+def test_cipher_uses_environment_key_for_existing_passwords(monkeypatch):
+    key = Fernet.generate_key()
+    passwords = {'smtp': 'smtp-secret', 'imap': 'imap-secret'}
+    row = {'secrets': Fernet(key).encrypt(json.dumps(passwords).encode()).decode()}
+    monkeypatch.setenv('EDOCUMENTS_MAIL_SETTINGS_KEY', '  ' + key.decode() + '  ')
+    assert mail_settings.credentials(row) == passwords
+    assert Fernet(key).decrypt(mail_settings.cipher().encrypt(b'new-password')) == b'new-password'
+
+
+def test_cipher_rejects_invalid_environment_key_without_exposing_it(monkeypatch):
+    monkeypatch.setenv('EDOCUMENTS_MAIL_SETTINGS_KEY', 'invalid-private-key')
+    with pytest.raises(HTTPException) as error:
+        mail_settings.cipher()
+    assert error.value.status_code == 503
+    assert 'invalid-private-key' not in error.value.detail
+
+
+def test_cipher_does_not_replace_a_key_that_cannot_decrypt_passwords(monkeypatch):
+    old_key = Fernet.generate_key()
+    new_key = Fernet.generate_key().decode()
+    row = {'secrets': Fernet(old_key).encrypt(b'{"smtp":"secret"}').decode()}
+    monkeypatch.setenv('EDOCUMENTS_MAIL_SETTINGS_KEY', new_key)
+    with pytest.raises(HTTPException) as error:
+        mail_settings.credentials(row)
+    assert error.value.status_code == 503
+    assert 'secret' not in error.value.detail
+    assert mail_settings.os.environ['EDOCUMENTS_MAIL_SETTINGS_KEY'] == new_key
 
 
 def account():

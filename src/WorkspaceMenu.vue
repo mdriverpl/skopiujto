@@ -12,13 +12,15 @@ let disposed = false
 const definitions = {
   start: { label: 'Start', icon: House }, ai: { label: 'Wiadomości', icon: Mail },
   mail: { label: 'Poczta Klienta', icon: Mail },
+  edelivery: { label: 'eDor\u0119czenia', icon: Mail },
   tasks: { label: 'Zadania', icon: ClipboardList }, calendar: { label: 'Terminarz', icon: CalendarDays },
   notes: { label: 'Notatki', icon: StickyNote }, documents: { label: 'Dokumenty', icon: Files },
   surveys: { label: 'Ankiety', icon: ClipboardCheck }, drive: { label: 'Mój dysk', icon: HardDrive },
   templates: { label: 'Szablony', icon: FileText }, dictionaries: { label: 'Słowniki', icon: BookOpen },
-  admin: { label: 'Użytkownicy i grupy', icon: Users }
+  companies: { label: 'Katalog firm', icon: Users },
+  help: { label: 'Pomoc', icon: BookOpen }, admin: { label: 'Użytkownicy i grupy', icon: Users }
 }
-const items = computed(() => order.value.filter(id => id !== 'admin' || props.user?.role === 'admin')
+const items = computed(() => order.value.filter(id => (id !== 'admin' || (props.user?.role === 'admin' && !props.user?.impersonation)) && (id !== 'companies' || props.user?.is_superadmin))
   .map(id => ({ id, ...definitions[id] })))
 const active = id => props.view === id || (id === 'drive' && props.view === 'active')
 async function saveOrder() {

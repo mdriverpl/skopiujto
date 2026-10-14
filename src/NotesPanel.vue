@@ -42,7 +42,7 @@ onMounted(() => run(load))
 </script>
 <template>
   <section class="notes-page">
-    <header><Teleport to="#workspace-title"><div><h1>Notatki <small>({{ notes.length }})</small></h1><p>Twoje osobiste pomysły, ustalenia i ważne informacje.</p></div></Teleport><div class="actions"><button class="icon-button" :disabled="busy" aria-label="Odśwież notatki" @click="run(load)"><RefreshCw :size="18" /></button><button :disabled="busy" @click="emit('ai')">Dodaj przez AI</button><button class="primary" :disabled="busy" @click="edit()"><Plus :size="17" /> Dodaj notatkę</button></div></header>
+    <header class="page-menu"><Teleport to="#workspace-title"><div><h1>Notatki <small>({{ notes.length }})</small></h1><p>Twoje osobiste pomysły, ustalenia i ważne informacje.</p></div></Teleport><div class="actions"><button class="icon-button" :disabled="busy" aria-label="Odśwież notatki" @click="run(load)"><RefreshCw :size="18" /></button><button :disabled="busy" @click="emit('ai')">Dodaj przez AI</button><button class="primary" :disabled="busy" @click="edit()"><Plus :size="17" /> Dodaj notatkę</button></div></header>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <form v-if="editor" class="panel note-editor" @submit.prevent="save">
       <div class="editor-heading"><h2>{{ editor.id ? 'Edytuj notatkę' : 'Nowa notatka' }}</h2><button type="button" class="icon-button" :disabled="busy" aria-label="Zamknij edytor notatki" @click="editor = null"><X :size="18" /></button></div>

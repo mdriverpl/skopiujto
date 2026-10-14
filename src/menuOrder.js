@@ -1,4 +1,4 @@
-export const defaultMenuOrder = ['start', 'ai', 'mail', 'tasks', 'calendar', 'notes', 'documents', 'surveys', 'drive', 'templates', 'dictionaries', 'admin']
+export const defaultMenuOrder = ['start', 'ai', 'mail', 'edelivery', 'tasks', 'calendar', 'notes', 'documents', 'surveys', 'drive', 'templates', 'dictionaries', 'companies', 'help', 'admin']
 
 export function normalizeMenuOrder(value) {
   const known = Array.isArray(value) ? value.filter(id => defaultMenuOrder.includes(id)) : []

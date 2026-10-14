@@ -84,9 +84,11 @@ onMounted(load)
 
 <template>
   <section class="ai-data-panel" aria-labelledby="ai-title">
+    <div class="page-menu">
     <header class="ai-heading"><Teleport to="#workspace-title"><div class="ai-heading-copy"><span class="ai-mark"><Sparkles :size="24" /></span><div><h1 id="ai-title">AI</h1><p>Twoje dane, gotowe do kolejnych dokumentów.</p></div></div></Teleport><div class="ai-heading-actions"><slot name="actions" /><button class="primary" :disabled="busy" @click="open()"><Plus :size="17" /> Dodaj dane</button></div></header>
-    <div class="ai-data-intro"><Database :size="18" /><p><strong>{{ profiles.length }} zestawów · {{ fieldCount }} zapisanych pól</strong><span>Dane są prywatne i zapamiętywane podczas wpisywania. AI automatycznie dopasowuje je w kolejnych dokumentach.</span></p></div>
     <div class="ai-data-toolbar"><Teleport to="#workspace-search"><div class="search"><Search :size="17" /><input v-model="search" aria-label="Szukaj zapisanych danych" placeholder="Szukaj zestawu, pola lub wartości…" /></div></Teleport><button :disabled="busy" @click="load"><RefreshCw :size="16" /> Odśwież</button></div>
+    </div>
+    <div class="ai-data-intro"><Database :size="18" /><p><strong>{{ profiles.length }} zestawów · {{ fieldCount }} zapisanych pól</strong><span>Dane są prywatne i zapamiętywane podczas wpisywania. AI automatycznie dopasowuje je w kolejnych dokumentach.</span></p></div>
     <p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="notice" class="ai-notice" role="status">{{ notice }}</p>
     <p v-if="!loaded && busy" class="ai-empty" role="status">Wczytywanie zapisanych danych…</p>
     <div v-else-if="loaded && !filtered.length" class="ai-empty"><Database :size="30" /><h2>{{ search.trim() ? 'Brak pasujących danych' : 'Zapisz dane raz, używaj wielokrotnie' }}</h2><p>{{ search.trim() ? 'Zmień wyszukiwaną nazwę lub wartość.' : 'Dodaj miejsce zawarcia umowy, dane swojej firmy lub kontrahenta.' }}</p><button v-if="!search.trim()" :disabled="busy" @click="open()"><Plus :size="16" /> Dodaj pierwszy zestaw</button></div>

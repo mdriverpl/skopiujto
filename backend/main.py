@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
 from backend import storage, access, admin, images, mailing, workflow, richtext, ai, document_fields, ai_files, saved_data, tasks, dictionaries, dictionary_excel, ai_commands, surveys, audit
-from backend import database, api_tokens, assistant, notes, client_mail, mail_settings
+from backend import database, api_tokens, assistant, notes, client_mail, mail_settings, edelivery, edelivery_connection, companies, impersonation
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / '.env')
@@ -56,8 +56,7 @@ def initialize():
         CREATE TABLE IF NOT EXISTS templates(id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id), title TEXT NOT NULL,
           category TEXT NOT NULL, description TEXT NOT NULL, content TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS deleted_default_templates(id TEXT PRIMARY KEY);
-        CREATE TABLE IF NOT EXISTS groups(id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
-        CREATE UNIQUE INDEX IF NOT EXISTS group_names ON groups(lower(name));
+        CREATE TABLE IF NOT EXISTS groups(id TEXT PRIMARY KEY, name TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS group_members(group_id TEXT REFERENCES groups(id) ON DELETE CASCADE,
           user_id TEXT REFERENCES users(id), PRIMARY KEY(group_id,user_id));
         CREATE TABLE IF NOT EXISTS group_permissions(group_id TEXT REFERENCES groups(id) ON DELETE CASCADE,
@@ -72,6 +71,8 @@ def initialize():
         mailing.migrate(c)
         c.executescript(saved_data.SCHEMA)
         c.executescript(notes.SCHEMA)
+        c.executescript(edelivery.SCHEMA)
+        c.executescript(edelivery_connection.SCHEMA)
         c.executescript(client_mail.SCHEMA)
         c.executescript(mail_settings.SCHEMA)
         tasks.initialize(c)
@@ -95,6 +96,8 @@ def initialize():
                 c.execute(f'ALTER TABLE users ADD COLUMN {name} {kind}')
         if 'role' not in user_columns:
             c.execute("UPDATE users SET role='admin' WHERE id=(SELECT id FROM users ORDER BY id LIMIT 1)")
+        companies.initialize(c)
+        c.executescript(impersonation.SCHEMA)
         columns = c.columns('documents')
         for name, kind in [('object_key', 'TEXT'), ('object_bucket', 'TEXT'), ('file_size', 'INTEGER'),
                            ('folder_id', 'TEXT REFERENCES folders(id) ON DELETE RESTRICT'),
@@ -156,21 +159,34 @@ def user(request: Request, bearer=Depends(bearer_auth), cookie=Depends(cookie_au
     token = bearer.credentials if bearer else (cookie or '')
     with db() as c:
         if bearer:
-            row = c.execute('SELECT u.*,t.scope AS api_scope FROM api_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.expires>? AND u.active=1', (digest(token),datetime.now(timezone.utc).timestamp())).fetchone()
+            row = c.execute('SELECT u.*,co.name AS company_name,t.scope AS api_scope FROM api_access_tokens t JOIN users u ON u.id=t.user_id JOIN companies co ON co.id=u.company_id WHERE t.token_hash=? AND t.expires>? AND u.active=1', (digest(token),datetime.now(timezone.utc).timestamp())).fetchone()
         else:
-            row = c.execute('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1', (digest(token),datetime.now(timezone.utc).timestamp())).fetchone()
+            row = c.execute('SELECT u.*,co.name AS company_name FROM sessions s JOIN users u ON u.id=s.user_id JOIN companies co ON co.id=u.company_id WHERE s.token=? AND s.expires>? AND u.active=1', (digest(token),datetime.now(timezone.utc).timestamp())).fetchone()
+        mode = None
+        if row and not bearer:
+            row, mode = impersonation.resolve(c, request, row, digest(token), digest)
     if not row:
         raise HTTPException(401, 'Zaloguj się, aby kontynuować.')
-    if row['must_change_password'] and request.url.path not in ('/api/me', '/api/me/password'):
+    if row['must_change_password'] and not mode and request.url.path not in ('/api/me', '/api/me/password'):
         raise HTTPException(403, 'Zmień hasło tymczasowe, aby kontynuować.')
     if bearer and row['api_scope'] == 'read' and request.method not in ('GET', 'HEAD', 'OPTIONS'):
         raise HTTPException(403, 'Ten klucz API pozwala wyłącznie na odczyt.')
     result = admin.public_account(row)
     result.pop('api_scope', None)
+    if mode:
+        result['impersonation'] = mode
+        result['must_change_password'] = False
+        if request.url.path == '/api/me/password' or request.url.path.startswith(('/api/access-tokens', '/api/admin/')):
+            raise HTTPException(403, 'W trybie klienta nie można zmieniać haseł, kluczy API ani zarządzać administracją. Wróć na własne konto.')
+    expected = request.headers.get('x-account-id')
+    if expected and expected != result['id'] and request.url.path != impersonation.STOP_PATH:
+        raise HTTPException(409, 'Konto w przeglądarce zostało zmienione. Odśwież tę kartę przed dalszą pracą.')
     return result
 
 admin.install(app, db, user, password_hash)
+companies.install(app, db, user)
 api_tokens.install(app, db, user)
+impersonation.install(app, db, user, digest, SECURE_COOKIE)
 
 class Credentials(BaseModel):
     name: str = Field(min_length=2, max_length=80)
@@ -182,6 +198,7 @@ def session(response, user_id):
         c.execute('DELETE FROM sessions WHERE expires<?',(datetime.now(timezone.utc).timestamp(),))
         c.execute('INSERT INTO sessions VALUES(?,?,?)',(digest(token),user_id,datetime.now(timezone.utc).timestamp()+604800))
     response.set_cookie('session',token,httponly=True,secure=SECURE_COOKIE,samesite='lax',max_age=604800)
+    response.delete_cookie(impersonation.COOKIE)
 
 @app.get('/api/setup')
 def setup_status():
@@ -207,6 +224,7 @@ def setup(body: Credentials, response: Response):
             raise HTTPException(409,'Konto administratora już istnieje.')
         uid = secrets.token_hex(16)
         c.execute("INSERT INTO users(id,name,password,role) VALUES(?,?,?,'admin')",(uid,body.name.strip(),password_hash(body.password)))
+        companies.bind_superadmin(c)
         result = admin.public_account(c.execute('SELECT * FROM users WHERE id=?', (uid,)).fetchone())
     session(response,uid)
     return result
@@ -214,7 +232,7 @@ def setup(body: Credentials, response: Response):
 @app.post('/api/login')
 def login(body: Credentials, response: Response):
     with db() as c:
-        row = c.execute('SELECT * FROM users WHERE name=?',(body.name.strip(),)).fetchone()
+        row = c.execute('SELECT u.*,co.name AS company_name FROM users u JOIN companies co ON co.id=u.company_id WHERE u.name=?',(body.name.strip(),)).fetchone()
     stored = row['password'] if row else password_hash('dummy-password')
     if not hmac.compare_digest(password_hash(body.password,stored.split(':')[0]),stored) or not row or not row['active']:
         raise HTTPException(401,'Nieprawidłowa nazwa użytkownika lub hasło.')
@@ -226,14 +244,17 @@ def logout(request: Request, response: Response):
     with db() as c:
         c.execute('DELETE FROM sessions WHERE token=?',(digest(request.cookies.get('session','')),))
     response.delete_cookie('session')
+    response.delete_cookie(impersonation.COOKIE)
 
 @app.get('/api/me')
-def me(current=Depends(user)):
+def me(request: Request, response: Response, current=Depends(user)):
+    if getattr(request.state, 'impersonation_expired', False):
+        response.delete_cookie(impersonation.COOKIE)
     return current
 
 class MenuOrderInput(BaseModel):
-    menu_order: list[Literal['start', 'ai', 'mail', 'tasks', 'calendar', 'notes', 'documents',
-                             'surveys', 'drive', 'templates', 'dictionaries', 'admin']] = Field(max_length=12)
+    menu_order: list[Literal['start', 'ai', 'mail', 'edelivery', 'tasks', 'calendar', 'notes', 'documents',
+                             'surveys', 'drive', 'templates', 'dictionaries', 'companies', 'help', 'admin']] = Field(max_length=15)
 
     @field_validator('menu_order')
     @classmethod
@@ -271,6 +292,7 @@ def change_password(body: PasswordChange, request: Request, response: Response, 
         c.execute('UPDATE users SET password=?,must_change_password=0 WHERE id=?', (password_hash(body.new_password), current['id']))
         c.execute('DELETE FROM sessions WHERE user_id=?', (current['id'],))
         c.execute('DELETE FROM api_access_tokens WHERE user_id=?', (current['id'],))
+        c.execute('DELETE FROM impersonation_sessions WHERE target_id=?', (current['id'],))
         result = admin.public_account(c.execute('SELECT * FROM users WHERE id=?', (current['id'],)).fetchone())
     session(response, current['id'])
     return result
@@ -877,6 +899,8 @@ dictionary_excel.install(app, db, user, now)
 ai_commands.install(app, db, user, now)
 assistant.install(app, user)
 notes.install(app, db, user, now)
+edelivery_connection.install(app, db, user, now)
+edelivery.install(app, db, user, now)
 client_mail.install(app, db, user, now)
 mail_settings.install(app, db, user)
 surveys.install(app, db, user, now)

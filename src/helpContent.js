@@ -1,0 +1,141 @@
+export const helpTopics = [
+  {
+    id: 'help', title: 'Pierwsze kroki',
+    description: 'Poznaj nawigację, wyszukiwanie i sposób zapisywania zmian w eDokumentach.',
+    steps: ['Wybierz moduł w menu po lewej. Na małym ekranie otwórz menu przyciskiem w nagłówku.', 'Pole wyszukiwania w nagłówku filtruje bieżący moduł. Usuń wpisany tekst, aby wrócić do całej listy.', 'Przyciski i filtry modułu są w jednym rzędzie. Jeżeli nie mieszczą się na ekranie, przewiń pasek poziomo.', 'Zapisuj zmiany przyciskiem Zapisz. Gdy pojawi się konflikt wersji, zachowaj wpisaną treść, odśwież dane i porównaj zmiany.'],
+    sections: [{ title: 'Dostosowanie aplikacji', paragraphs: ['Ctrl + przeciągnięcie pozycji menu zmienia jej kolejność. Możesz też użyć Ctrl + strzałka w górę lub w dół po ustawieniu fokusu na pozycji. Kolejność jest zapisywana na Twoim koncie.', 'Paleta przy nazwie użytkownika pozwala wybrać motyw. Zmiana hasła jest dostępna po kliknięciu nazwy użytkownika.'] }]
+  },
+  {
+    id: 'start', title: 'Start i Edzio',
+    description: 'Podsumowanie Twoich zadań, ankiet i terminów oraz pomoc asystenta Edzio.',
+    steps: ['Sprawdź zadania i ankiety oczekujące na Twoje działanie.', 'Kliknij kafelek, aby przejść do odpowiedniego modułu.', 'Otwórz rozmowę z Edziem i opisz, co chcesz przygotować, np. „Dodaj notatkę z ustaleniami spotkania”.', 'Sprawdź przygotowany podgląd i zatwierdź zapis albo przejdź do edytora.'],
+    sections: [{ title: 'Polecenia głosowe i AI', paragraphs: ['Mikrofon wymaga zgody przeglądarki i obsługi rozpoznawania mowy. Polecenie możesz zawsze wpisać ręcznie.', 'Dokument, ankieta i wiadomość przygotowane przez AI wymagają Twojego sprawdzenia. Wysyłka wiadomości odbywa się po zatwierdzeniu w module Wiadomości. Funkcje AI wymagają konfiguracji serwera.'] }]
+  },
+  {
+    id: 'ai', title: 'Wiadomości',
+    description: 'Wiadomości wewnętrzne, powiadomienia i historia wysyłek.',
+    steps: ['Wybierz Wszystkie, Odebrane lub Wysłane.', 'Użyj filtrów osoby, opisu i daty, aby znaleźć wiadomość.', 'Kliknij Nowa wiadomość lub Nowa wiadomość AI, przygotuj treść i wybierz odbiorców.', 'Sprawdź podgląd oraz kanały dostarczenia i zatwierdź wysyłkę.'],
+    sections: [{ title: 'Kanały dostarczenia', paragraphs: ['Wiadomość może trafić do aplikacji lub przez skonfigurowane kanały zewnętrzne. E-mail wymaga SMTP, a SMS konfiguracji SMSAPI.', 'Status wysyłki pokazuje wynik przekazania wiadomości do danego kanału. Błąd wysyłki nie oznacza, że odbiorca otrzymał wiadomość.'] }]
+  },
+  {
+    id: 'mail', title: 'Poczta Klienta',
+    description: 'Osobista skrzynka e-mail z odbieraniem przez IMAP, wysyłaniem przez SMTP i analizą AI.',
+    steps: ['Otwórz Ustawienia poczty w panelu bocznym skrzynki.', 'Wpisz adres e-mail, nazwę nadawcy oraz dane SMTP i IMAP podane przez dostawcę poczty.', 'Wybierz właściwe zabezpieczenie i port. Jeżeli dostawca wymaga hasła aplikacji, użyj go zamiast zwykłego hasła konta.', 'Zapisz ustawienia i sprawdź połączenie. Odśwież pocztę, aby pobrać wiadomości z INBOX.', 'Wybierz wiadomość, aby przeczytać treść, pobrać załącznik, odpowiedzieć lub przekazać ją dalej.'],
+    sections: [
+      { title: 'Hasła i szkice', paragraphs: ['Ustawienia dotyczą tylko Twojego konta. Puste pole hasła zachowuje dotychczasowe hasło; opcja usunięcia hasła je kasuje.', 'Przygotowana odpowiedź pozostaje szkicem, dopóki nie klikniesz Wyślij. Zapisz szkic, jeżeli chcesz wrócić do niego później.', 'Import .eml pozwala wczytać wiadomość z pliku. Analiza AI jest uruchamiana na żądanie i przekazuje treść wiadomości do skonfigurowanego AI.'] },
+      { title: 'Problem z szyfrowaniem haseł', paragraphs: ['Komunikat „Brak klucza szyfrowania” oznacza, że backend nie ma ustawionej zmiennej EDOCUMENTS_MAIL_SETTINGS_KEY. Administrator serwera znajdzie instrukcję w temacie Klucz szyfrowania poczty.', 'Komunikat „Nie można odczytać haseł” może oznaczać, że ustawiono inny klucz niż ten użyty do zapisu. Trzeba przywrócić właściwy klucz.'] }
+    ]
+  },
+  {
+    id: 'edelivery', title: 'eDoręczenia',
+    description: 'Prywatny rejestr przesyłek elektronicznych oraz instrukcja przygotowania dostępu do skrzynki Poczty Polskiej.',
+    steps: ['Kliknij Dodaj przesyłkę i wpisz temat oraz nadawcę lub odbiorcę.', 'Wybierz kierunek, status i datę. Opcjonalnie dodaj adres do eDoręczeń, numer przesyłki i notatki.', 'Zapisz wpis. Szukaj przesyłek po temacie, numerze lub korespondencie i filtruj je według kierunku lub statusu.', 'Otwórz skrzynkę przyciskiem w menu, aby obsłużyć rzeczywistą korespondencję w serwisie operatora.'],
+    sections: [
+      { title: 'Podłączenie skrzynki w aplikacji', steps: ['Kliknij Konfiguracja skrzynki w menu eDoręczeń.', 'Podaj ADE i dokładną nazwę zarejestrowanego systemu zewnętrznego. Wczytaj certyfikat X.509 oraz odpowiadający mu klucz prywatny w formacie PEM, a w razie potrzeby hasło klucza.', 'Włącz połączenie i wybierz Zapisz i sprawdź. Test sprawdza uwierzytelnienie i dostęp do listy wiadomości.', 'Kliknij Synchronizuj skrzynkę, aby zaimportować metadane do 500 najnowszych przesyłek. Kolejna synchronizacja aktualizuje statusy bez tworzenia duplikatów.'], paragraphs: ['Konfiguracja i rejestr są prywatne. Klucz jest szyfrowany po stronie serwera i nie jest zwracany przez API. Puste pola certyfikatu i klucza zachowują zapisane dane.', 'Synchronizacja nie pobiera pełnej treści ani załączników, nie oznacza wiadomości jako otwartych i nie wysyła przesyłek. Oryginalny status operatora jest widoczny w rejestrze. Usunięcie wpisu usuwa go lokalnie; kolejna synchronizacja może go przywrócić. Obsługiwany jest PROD Poczty Polskiej i eksportowalne klucze RSA lub EC w PEM. Podpisy z urządzeń i usług bez eksportu PEM wymagają dodatkowego adaptera.'] },
+      { title: 'Klucz, certyfikat i token — co jest potrzebne?', paragraphs: ['Dostęp API Poczty Polskiej wymaga upoważnionego systemu zewnętrznego. System podpisuje token JWT kluczem prywatnym powiązanym z certyfikatem X.509, a następnie otrzymuje krótkotrwały token dostępowy.', 'To osobna konfiguracja od EDOCUMENTS_MAIL_SETTINGS_KEY, który chroni hasła zwykłej poczty e-mail. Certyfikat HTTPS strony skopiujto.pl również nie zastępuje certyfikatu integracyjnego.'] },
+      { title: 'Jak uzyskać certyfikat na produkcji', paragraphs: ['Najpierw ustal rodzaj podmiotu i środowisko: testowe INT albo produkcyjne PROD. Instrukcja PROD przewiduje certyfikaty operatora dla podmiotów publicznych, natomiast dla niepublicznych wskazuje certyfikat kwalifikowany od komercyjnego dostawcy.', 'Dla podmiotu niepublicznego uzgodnij z dostawcą certyfikat obsługujący podpisywanie tokenów systemowych. Nie wystarczy samodzielnie wygenerowany klucz ani zwykły certyfikat SSL. Szczegółowe wymagania i dopuszczalne rozwiązania sprawdź w aktualnej instrukcji operatora.'] },
+      { title: 'Dodanie systemu w skrzynce', steps: ['Zaloguj się jako właściciel lub administrator właściwej skrzynki.', 'Otwórz Uprawnienia → Systemy → Dodaj system.', 'Podaj nazwę, np. eDokumenty, i opis. Wybierz dostępny dla Twojego podmiotu środek uwierzytelnienia.', 'Zarejestruj certyfikat; jeżeli dla Twojego środowiska dostępne jest żądanie certyfikatu, prześlij plik CSR przygotowany przez administratora.', 'Zapisz i potwierdź dodanie systemu. Zachowaj nazwę systemu, adres ADE i certyfikat. Klucz prywatny pozostaje na serwerze.'] },
+      { title: 'Przygotowanie CSR przez administratora', paragraphs: ['Poniższe polecenia OpenSSL tworzą nową parę RSA i żądanie CSR w nowym, zabezpieczonym katalogu. Nie uruchamiaj ich na istniejących plikach. W formularzu wpisz dane podmiotu i domenę systemu; nie stosuj danych przykładowych.', 'CSR jest tylko żądaniem wystawienia certyfikatu. Wygenerowanie go nie nadaje dostępu do API i nie zastępuje wymaganego certyfikatu kwalifikowanego na produkcji.'], code: 'openssl genrsa -out edokumenty-private.key 2048\nopenssl req -new -key edokumenty-private.key -out edokumenty.csr\nopenssl req -in edokumenty.csr -noout -verify' },
+      { title: 'Przed podłączeniem aplikacji', paragraphs: ['Administrator potrzebuje adresu ADE, identyfikatora lub nazwy zarejestrowanego systemu, właściwego certyfikatu i dostępu do klucza prywatnego. Integracja powinna używać aktualnego UA API v3. Dostęp do środowiska INT uzyskuje się według procedury COI.', 'Klucza prywatnego nie przesyłaj przez czat, wiadomości ani rejestr przesyłek. Administrator umieszcza go w zabezpieczonej konfiguracji serwera i sprawdza uwierzytelnienie przed uruchomieniem synchronizacji.'] }
+    ],
+    sources: [
+      { label: 'Dodanie systemu i CSR — instrukcja operatora', url: 'https://www.gov.pl/attachment/0c5a5272-b629-4a57-8c16-7935c6cb7037' },
+      { label: 'Integracja PROD i wymagania certyfikatów', url: 'https://www.gov.pl/attachment/d48d0188-cc7a-42c2-8497-99da442ef9ce' },
+      { label: 'Aktualne wersje UA API', url: 'https://www.gov.pl/web/e-doreczenia/interfejsy-api' },
+      { label: 'Środowisko testowe i materiały dla integratorów', url: 'https://www.gov.pl/web/e-doreczenia/integracja-uslugi-e-doreczen-z-systemami-klasy-ezd' }
+    ], verified: '14.10.2026'
+  },
+  {
+    id: 'tasks', title: 'Zadania', description: 'Zadania dla Ciebie, zadania wysłane i prośby o akceptację.',
+    steps: ['Wybierz Zadania dla mnie lub Zadania wysłane.', 'Użyj wyszukiwania i filtra statusu.', 'Kliknij Nowe zadanie, wybierz odbiorcę, tytuł, opis i opcjonalne powiązanie z plikiem lub katalogiem.', 'Otwórz powiązany zasób i wykonaj działanie. Zmień status zadania na rozpoczęte lub zakończone.'],
+    sections: [{ title: 'Zadanie a akceptacja', paragraphs: ['Zadania związane z plikiem lub katalogiem kierują do tego zasobu, jeśli masz do niego dostęp. Prośbę o akceptację potwierdzasz osobno.', 'Oznaczenie zadania jako zakończone nie zastępuje podpisu ani potwierdzenia akceptacji dokumentu.'] }]
+  },
+  {
+    id: 'calendar', title: 'Terminarz', description: 'Kalendarz zadań i terminów oraz lista zadań bez terminu.',
+    steps: ['Przejdź do wybranego miesiąca lub kliknij Dzisiaj.', 'Wybierz dzień, aby zobaczyć zaplanowane zadania.', 'Otwórz zadanie lub jego powiązany zasób.', 'Dodaj nowe zadanie z terminem. Zadania bez terminu sprawdzisz w osobnej części kalendarza.'],
+    sections: [{ title: 'Terminy', paragraphs: ['Daty kalendarza uwzględniają strefę Europe/Warsaw. Zadania po terminie są wyróżnione. Jeżeli zadania nie widać w wybranym dniu, sprawdź jego termin i odśwież terminarz.'] }]
+  },
+  {
+    id: 'notes', title: 'Notatki', description: 'Twoje prywatne pomysły, ustalenia i informacje zapisane na koncie.',
+    steps: ['Kliknij Dodaj notatkę i wpisz tytuł oraz treść.', 'Zapisz notatkę, aby wrócić do niej w kolejnej sesji.', 'Kliknij notatkę, aby ją edytować, albo użyj wyszukiwania.', 'Dodaj przez AI otwiera pomoc Edzia; sprawdź przygotowany szkic przed zapisem.'],
+    sections: [{ title: 'Prywatność i usuwanie', paragraphs: ['Notatki są widoczne tylko dla ich właściciela. Usunięcie wymaga potwierdzenia. Konflikt wersji chroni przed nadpisaniem zmian z innej sesji.'] }]
+  },
+  {
+    id: 'documents', title: 'Dokumenty', description: 'Tworzenie i porządkowanie dokumentów w katalogu Dokumenty.',
+    steps: ['Otwórz katalog, w którym chcesz zapisać dokument.', 'Dodaj dokument pusty, z szablonu lub z pomocą AI. Możesz też przesłać plik albo dodać katalog.', 'Uzupełnij pola i sprawdź treść w edytorze.', 'Zapisz dokument. Użyj akcji przy pliku, aby pobrać go lub wykonać dostępne działania.'],
+    sections: [{ title: 'Dostęp i pola dokumentu', paragraphs: ['Dodawanie i edycja wymagają odpowiednich uprawnień. Jeśli przycisk jest niedostępny, sprawdź bieżący katalog i skontaktuj się z administratorem.', 'Pola w nawiasach, np. [imię sprzedającego], można uzupełniać przez formularz. Używaj różnych nazw dla danych różnych osób. Szczegóły znajdziesz w temacie Edytor dokumentu.'] }]
+  },
+  {
+    id: 'surveys', title: 'Ankiety', description: 'Tworzenie ankiet, wysyłanie ich odbiorcom i przeglądanie odpowiedzi.',
+    steps: ['Wybierz Wszystkie, Dla mnie, Utworzone przeze mnie lub Bibliotekę ankiet specjalnych.', 'Utwórz ankietę samodzielnie albo przygotuj szkic przez AI i sprawdź pytania.', 'Wyślij ankietę wybranym odbiorcom.', 'Otwórz przydzieloną ankietę i zapisz odpowiedź. Jako autor sprawdzaj odpowiedzi oraz statystyki.'],
+    sections: [{ title: 'Zamykanie i wyniki', paragraphs: ['Autor może zamknąć ankietę, aby zakończyć zbieranie odpowiedzi. Usunięcie ankiety jest osobnym działaniem.', 'Interpretacje AI i wyniki ankiet specjalnych należy oceniać w kontekście przeznaczenia ankiety; nie zastępują indywidualnej oceny specjalisty.'] }]
+  },
+  {
+    id: 'drive', title: 'Mój dysk', description: 'Pliki i katalogi, widok listy lub kafelków oraz działania na zasobach.',
+    steps: ['Otwórz katalog lub użyj ścieżki nad listą, aby wrócić wyżej.', 'Prześlij pliki, dodaj katalog albo utwórz dokument.', 'Filtruj po typie pliku i wyszukuj po nazwie. Zmień widok na listę lub kafelki.', 'Wybierz dostępną akcję przy zasobie: pobranie, historia, zadanie lub udostępnienie.'],
+    sections: [{ title: 'Uprawnienia i udostępnianie', paragraphs: ['Dostęp zależy od uprawnień konta oraz ustawień katalogu. Ikona dostępu informuje o sposobie udostępnienia.', 'Link do pliku może mieć termin ważności. Przed przekazaniem linku upewnij się, że odbiorca ma otrzymać dostęp do aktualnej treści. Wysyłka i akceptacje mają osobną instrukcję.'] }]
+  },
+  {
+    id: 'active', title: 'Aktywne dokumenty', description: 'Zasoby wymagające działania z dostępnych katalogów.',
+    steps: ['Otwórz Aktywne dokumenty z Mojego dysku.', 'Wybierz filtr podpisania, modyfikacji, akceptacji, toku lub terminów.', 'Wyszukaj dokument i otwórz go, aby wykonać wymagane działanie.', 'Odśwież listę po zmianie statusu.'],
+    sections: [{ title: 'Dlaczego dokument jest na liście?', paragraphs: ['Lista zbiera zasoby związane z niezakończonymi zadaniami i działaniami. Wykonanie jednego zadania nie usuwa innych zadań dotyczących tego samego dokumentu.'] }]
+  },
+  {
+    id: 'templates', title: 'Szablony', description: 'Gotowe wzory i własne szablony do kolejnych dokumentów.',
+    steps: ['Wyszukaj wzór i wybierz kategorię lub zestaw: Wszystkie, Moje szablony, Gotowe wzory.', 'Otwórz podgląd i sprawdź treść.', 'Utwórz własny szablon albo szkic z AI. Dodaj pola w nawiasach dla zmiennych danych.', 'Edytuj wzór, jeśli masz uprawnienia, lub utwórz własną kopię. Zapisz zmiany.'],
+    sections: [{ title: 'Szablon a dokument', paragraphs: ['Szablon jest wzorem wielokrotnego użytku. Dokument powstały z szablonu zapisujesz osobno na dysku. Usunięcie wzoru nie usuwa już utworzonych dokumentów.'] }]
+  },
+  {
+    id: 'dictionaries', title: 'Słowniki', description: 'Listy danych wielokrotnego użytku i dane zapamiętane dla AI.',
+    steps: ['Otwórz istniejący słownik lub kliknij Dodaj słownik.', 'Nadaj nazwę i zdefiniuj pola, które staną się kolumnami.', 'Dodawaj i edytuj wpisy. Wyszukiwanie sprawdza zawartość słownika.', 'Użyj Eksport Excel albo Import Excel. Sprawdź podgląd importu przed zatwierdzeniem.'],
+    sections: [{ title: 'Dane AI i zmiana pól', paragraphs: ['Kafelek AI otwiera prywatne zestawy danych zapamiętane podczas pracy nad dokumentami. Możesz je przejrzeć i poprawić.', 'Zmiana schematu słownika wpływa na jego wpisy. Sprawdź ostrzeżenia o usuwanych polach przed zapisem. Import Excela dodaje wpisy po zatwierdzeniu podglądu.'] }]
+  },
+  {
+    id: 'admin', title: 'Użytkownicy i grupy', adminOnly: true,
+    description: 'Administracja kontami i dostępem grup do plików i katalogów.',
+    steps: ['Dodaj użytkownika z nazwą i adresem e-mail. Serwer wysyła hasło tymczasowe przez SMTP.', 'Nadaj uprawnienia do własnych zasobów. Rola administratora udostępnia zarządzanie systemem.', 'Utwórz grupę i przypisz do niej użytkowników.', 'Wybierz zakres grupy i ustaw odczyt, edycję, dodawanie i usuwanie. Sprawdź dostęp na koncie użytkownika.'],
+    sections: [{ title: 'Hasła i blokowanie', paragraphs: ['Nowy użytkownik zmienia hasło tymczasowe przy pierwszym logowaniu. Reset hasła wymaga kolejnej zmiany. Konto nieaktywne jest zablokowane.', 'Dostęp do cudzych zasobów nadajesz przez grupy lub udostępnienie katalogu. Uprawnienia do własnych plików nie dają automatycznie dostępu do cudzych plików.'] }]
+  },
+  {
+    id: 'companies', title: 'Katalog firm', superOnly: true,
+    description: 'Katalog firm zarządzany przez jednego superadministratora oraz przypisania kont do firm.',
+    steps: ['Dodaj firmę, wpisując nazwę i opcjonalne dane kontaktowe oraz NIP.', 'W module Użytkownicy i grupy wybierz firmę podczas tworzenia lub edycji konta.', 'Nazwij i uzupełnij Firmę domyślną, do której zostały przypisane wcześniejsze konta.', 'Usuwaj tylko firmy bez kont i grup. Firma domyślna pozostaje jako firma startowa.'],
+    sections: [{ title: 'Superadministrator i administrator firmy', paragraphs: ['Tylko wskazane konto superadministratora ma dostęp do katalogu firm i może przenosić konta między firmami. Zwykły administrator zarządza kontami i grupami swojej firmy.', 'Zmiana firmy konta kończy jego sesje i usuwa członkostwa w grupach. Dokumenty pozostają przypisane do użytkownika.', 'Superadministrator jest przypisany do stałego ID konta w bazie. Zmiana nazwy lub e-maila nie przenosi tej roli na inne konto.'] },
+      { title: 'Wejście na konto klienta', steps: ['Otwórz Użytkownicy i grupy na swoim koncie superadministratora.', 'Przy aktywnym koncie klienta wybierz Wejdź na konto. Nie musisz znać jego hasła.', 'Pasek u góry treści pokazuje konto klienta i administratora. Pracujesz z uprawnieniami klienta, a zmiany są rzeczywiste.', 'Wróć na konto administratora przyciskiem w pasku. Wejścia i powroty sprawdzisz w Historii wejść na konta.'], paragraphs: ['Tryb trwa do 30 minut i wymaga aktywnej sesji superadministratora. Nie można go uruchomić kluczem API, zagnieżdżać, zmieniać w nim haseł ani zarządzać kluczami API i administracją.', 'Przełączenie dotyczy kart tej samej przeglądarki. Po zmianie konta odśwież inne karty; żądania ze starym identyfikatorem konta są blokowane.'] }]
+  },
+  {
+    id: 'editor', title: 'Edytor dokumentu', description: 'Treść, formatowanie, pola i podgląd dokumentu.',
+    steps: ['Wpisz treść lub otwórz dokument ze wzoru.', 'Użyj paska formatowania, aby zmienić nagłówki, wyrównanie, listy lub wygląd tekstu.', 'Przełącz się na Podgląd i dane, aby uzupełnić miejsca w nawiasach.', 'Sprawdź wynik i zapisz dokument.'],
+    sections: [{ title: 'Nazwy pól', paragraphs: ['Ta sama nazwa pola w kilku miejscach oznacza jedną wspólną wartość. Dla różnych osób stosuj odrębne nazwy, np. [adres sprzedającego] i [adres kupującego].', 'Edytuj treść wzoru pozwala poprawić dokument i dodać pola. Puste pola pozostają oznaczone nawiasami.'] }]
+  },
+  {
+    id: 'sharing', title: 'Wysyłanie plików i akceptacje', description: 'Przekazywanie pliku odbiorcy oraz potwierdzanie jego akceptacji.',
+    steps: ['Wybierz akcję wysłania przy pliku, do którego masz odpowiednie uprawnienia.', 'Wskaż odbiorców i dostępne kanały dostarczenia.', 'Sprawdź treść oraz termin ważności linku i zatwierdź wysyłkę.', 'Obserwuj historię wysyłki i wynik akceptacji.'],
+    sections: [{ title: 'Potwierdzenie odbiorcy', paragraphs: ['Odbiorca może pobrać przekazany plik i zatwierdzić akceptację przez udostępniony mu widok. Wygaśnięcie linku blokuje dalsze użycie tego zaproszenia.', 'Status przyjęcia e-maila przez SMTP i akceptacja dokumentu przez odbiorcę to dwa różne zdarzenia.'] }]
+  },
+  {
+    id: 'history', title: 'Historia zmian', description: 'Przegląd operacji dotyczących pliku, katalogu lub szablonu.',
+    steps: ['Kliknij ikonę Historia przy wybranym zasobie.', 'Sprawdź autora, czas i rodzaj operacji.', 'Zamknij historię, aby wrócić do pracy z zasobem.'],
+    sections: [{ title: 'Dostęp do historii', paragraphs: ['Historia respektuje dostęp do zasobu. Jest rejestrem zdarzeń; nie należy traktować jej jako automatycznej kopii zapasowej ani przycisku cofnięcia zmian.'] }]
+  },
+  {
+    id: 'mail-key', title: 'Klucz szyfrowania poczty', adminOnly: true,
+    description: 'Konfiguracja EDOCUMENTS_MAIL_SETTINGS_KEY na serwerze i rozwiązywanie problemów z odszyfrowaniem haseł.',
+    steps: ['Dla istniejącej instalacji zachowaj dotychczasowy klucz. Jeżeli był w data/mail-settings.key, przenieś jego zawartość do EDOCUMENTS_MAIL_SETTINGS_KEY w serwerowym .env.', 'Tylko dla nowej instalacji bez zapisanych haseł wygeneruj nowy klucz Fernet poleceniem poniżej.', 'Wpisz klucz w .env: EDOCUMENTS_MAIL_SETTINGS_KEY=<klucz>. Nie umieszczaj tego pliku w repozytorium.', 'Po zmianie .env odtwórz kontener app. Sam restart nie wczytuje zmienionych zmiennych kontenera.'],
+    sections: [
+      { title: 'Nowa instalacja — generowanie klucza', paragraphs: ['Polecenie drukuje nowy sekret. Wykonuj je w prywatnym terminalu serwera i przenieś wynik bezpośrednio do konfiguracji. Nie zastępuj nim klucza istniejącej bazy.'], code: 'docker compose run --rm --no-deps app python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"' },
+      { title: 'Wczytanie konfiguracji i kontrola bez ujawniania klucza', code: 'docker compose up -d --force-recreate app\ndocker compose exec app python -c "import os; print(\'Klucz obecny\' if os.getenv(\'EDOCUMENTS_MAIL_SETTINGS_KEY\', \'\').strip() else \'Brak klucza\')"' },
+      { title: 'Błędy i kopie zapasowe', paragraphs: ['Brak klucza: sprawdź właściwy plik .env i odtwórz kontener. Niepoprawny klucz: sprawdź format Fernet i czy wartość nie została ucięta. Nie można odczytać haseł: przywróć klucz użyty do ich zapisania.', 'Backend korzysta wyłącznie ze zmiennej środowiskowej. Klucz przechowuj razem z bezpieczną kopią bazy i stosuj ten sam na wszystkich instancjach.'] }
+    ]
+  }
+]
+
+export function getHelpTopic(id) {
+  return helpTopics.find(topic => topic.id === id) || helpTopics[0]
+}
+
+export function findHelpTopics(query = '', role = 'user', superadmin = false) {
+  const term = query.trim().toLocaleLowerCase('pl')
+  return helpTopics.filter(topic => (!topic.adminOnly || role === 'admin') && (!topic.superOnly || superadmin) &&
+    JSON.stringify(topic).toLocaleLowerCase('pl').includes(term))
+}

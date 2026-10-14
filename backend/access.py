@@ -7,6 +7,7 @@ IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.heic', '
 
 def permissions(con, current, folder_id, owner_id=None):
     scopes = []
+    resource_owner = owner_id
     own = owner_id == current['id'] or (folder_id is None and owner_id is None)
     visited = set()
     while folder_id is not None and folder_id not in visited:
@@ -15,6 +16,8 @@ def permissions(con, current, folder_id, owner_id=None):
         folder = con.execute('SELECT user_id,parent_id,access_mode FROM folders WHERE id=?', (folder_id,)).fetchone()
         if not folder:
             break
+        if resource_owner is None:
+            resource_owner = folder['user_id']
         own = own or folder['user_id'] == current['id']
         if folder['access_mode'] != 'inherit':
             break
@@ -23,9 +26,12 @@ def permissions(con, current, folder_id, owner_id=None):
         scopes.append('root')
     result = {action: bool(current.get('can_' + action, False)) if own else False for action in ACTIONS}
     placeholders = ','.join('?' for _ in scopes)
+    owner = con.execute('SELECT company_id FROM users WHERE id=?', (resource_owner or current['id'],)).fetchone()
+    company_id = owner['company_id'] if owner else current.get('company_id')
     rows = list(con.execute(f'''SELECT p.can_read,p.can_edit,p.can_add,p.can_delete FROM group_permissions p
       JOIN group_members m ON m.group_id=p.group_id
-      WHERE m.user_id=? AND p.scope IN ({placeholders})''', (current['id'], *scopes)))
+      JOIN groups g ON g.id=p.group_id
+      WHERE m.user_id=? AND g.company_id=? AND p.scope IN ({placeholders})''', (current['id'], company_id, *scopes)))
     rows += list(con.execute(f'''SELECT can_read,can_edit,can_add,can_delete FROM folder_user_permissions
       WHERE user_id=? AND folder_id IN ({placeholders})''', (current['id'], *scopes)))
     for row in rows:

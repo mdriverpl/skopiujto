@@ -4,7 +4,6 @@ import json
 import os
 import smtplib
 import ssl
-from pathlib import Path
 from typing import Literal
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -13,7 +12,6 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 from backend import ai, mailer
 
-KEY_FILE = Path(__file__).resolve().parents[1] / 'data' / 'mail-settings.key'
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS client_mail_settings(
  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -82,20 +80,10 @@ class Account(BaseModel):
         return self
 
 
-def cipher(create=False):
+def cipher():
     key = os.getenv('EDOCUMENTS_MAIL_SETTINGS_KEY', '').strip()
     if not key:
-        try: key = KEY_FILE.read_bytes().strip()
-        except FileNotFoundError:
-            if not create:
-                raise HTTPException(503, 'Brak klucza szyfrowania ustawień poczty na serwerze.') from None
-            KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
-            generated = Fernet.generate_key()
-            try:
-                fd = os.open(KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                with os.fdopen(fd, 'wb') as stream: stream.write(generated)
-                key = generated
-            except FileExistsError: key = KEY_FILE.read_bytes().strip()
+        raise HTTPException(503, 'Brak klucza szyfrowania ustawień poczty na serwerze. Ustaw EDOCUMENTS_MAIL_SETTINGS_KEY w .env i uruchom ponownie backend.') from None
     try: return Fernet(key)
     except (ValueError, TypeError):
         raise HTTPException(503, 'Niepoprawny klucz szyfrowania ustawień poczty na serwerze.') from None
@@ -186,7 +174,7 @@ def install(app, db, user):
                 if transport['enabled'] and transport['username'] and not secret[name]:
                     raise HTTPException(422, f'Podaj hasło {name.upper()} lub hasło aplikacji.')
                 transport['has_password'] = bool(secret[name])
-            encrypted = cipher(create=True).encrypt(json.dumps(secret).encode()).decode()
+            encrypted = cipher().encrypt(json.dumps(secret).encode()).decode()
             con.execute('''INSERT INTO client_mail_settings(user_id,config,secrets,version) VALUES(?,?,?,1)
                 ON CONFLICT(user_id) DO UPDATE SET config=excluded.config,secrets=excluded.secrets,version=client_mail_settings.version+1''',
                 (current['id'], json.dumps(data), encrypted))

@@ -245,8 +245,6 @@ legend { font-size: 13px; padding: 0 6px; }
 #workspace-search input { display:block; padding:9px 0; border:0; background:transparent; font-size:12px; width:100%; }
 #workspace-search svg { flex-shrink:0; }
 .has-workspace .account { margin-left:0; }
-.documents-heading, .tasks-heading, .templates-heading, .calendar-heading, .commands-heading, .dictionary-heading, .survey-heading, .active-heading, .notes-page > header { justify-content:flex-end; }
-.drive-toolbar .toolbar-controls, .templates-toolbar .template-controls { margin-left:auto; }
 @media (max-width:1100px) { .has-workspace .brand-link { display:none; } .workspace-search { width:250px; } .has-workspace .account { gap:6px; } }
 @media (max-width:750px) { .has-workspace .topbar { gap:12px; } .workspace-heading { flex:1; } #workspace-title h1 { font-size:18px; } #workspace-title p, #workspace-title small { display:none; } .workspace-search { order:4; width:100%; } .workspace-section-icon { padding:8px; } }
 
@@ -267,3 +265,49 @@ legend { font-size: 13px; padding: 0 6px; }
 @media (min-width:1251px) {
   .with-sidebar > main.mail-workspace { display:flex; flex-direction:column; height:calc(100dvh - 94px); min-height:0; }
 }
+
+/* Shared page menus: one left-aligned row, scrollable on narrow screens. */
+.has-workspace .page-menu {
+  display:flex; flex-direction:row; align-items:center; justify-content:flex-start;
+  flex-wrap:nowrap; gap:10px; min-width:0; max-width:100%;
+  margin:0 0 20px; padding:4px 3px 8px; overflow-x:auto;
+}
+.has-workspace .page-menu :is(
+  .tasks-heading, .tasks-toolbar, .tasks-search-row, .templates-heading, .templates-toolbar,
+  .active-heading, .active-toolbar, .ai-heading, .ai-data-toolbar,
+  .commands-heading, .survey-heading, .survey-filters, .toolbar-controls
+) { display:contents; }
+.has-workspace .page-menu :is(
+  .tasks-actions, .tasks-tabs, .heading-actions, .template-controls, .scope-filters,
+  .active-filters, .ai-heading-actions, .commands-tabs, .survey-actions, .survey-tabs,
+  .dictionary-heading-actions, .calendar-actions, .actions, .drive-actions
+) {
+  display:flex; flex-direction:row; align-items:center; justify-content:flex-start;
+  flex:0 0 auto; flex-wrap:nowrap; gap:10px; margin:0; width:auto;
+}
+.has-workspace .documents-heading { display:contents; }
+.has-workspace .page-menu :is(button, select, .excel-transfer, .layout-switch, .survey-badge) {
+  flex:0 0 auto; white-space:nowrap; margin:0;
+}
+.has-workspace .page-menu :is(button, select, .excel-export) { min-height:38px; font-size:12px; }
+.has-workspace .page-menu > button { width:auto; }
+.has-workspace .page-menu .layout-switch { display:flex; }
+.has-workspace .page-menu .layout-switch button { min-height:30px; }
+.has-workspace .mail-reader-toolbar {
+  justify-content:flex-start; flex-wrap:nowrap; overflow-x:auto;
+}
+.has-workspace .mail-reader-toolbar > button { flex:0 0 auto; white-space:nowrap; }
+.has-workspace .mail-folders.page-menu {
+  flex-shrink:0; gap:8px; margin:0; padding:12px 8px;
+}
+.has-workspace .mail-folders.page-menu button {
+  flex-direction:row; justify-content:flex-start; padding:8px; font-size:12px;
+}
+.has-workspace .mail-folders.page-menu small { position:static; }
+
+.account-company { max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; color:var(--muted); }
+@media(max-width:750px) { .account-company { display:none; } }
+
+.impersonation-banner { position:sticky; top:100px; z-index:5; display:flex; align-items:center; justify-content:space-between; gap:16px; margin:0 0 22px; padding:14px 16px; border:1px solid var(--warning); border-radius:12px; color:var(--text); background:var(--warning-soft); box-shadow:0 2px 8px #0001; }
+.impersonation-banner strong { display:block; font-size:13px; } .impersonation-banner span { display:block; font-size:11px; line-height:1.7; margin-top:4px; } .impersonation-banner button { flex-shrink:0; font-size:12px; }
+@media(max-width:750px) { .impersonation-banner { top:8px; flex-direction:column; align-items:flex-start; } }

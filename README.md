@@ -41,7 +41,113 @@ Uruchom frontend przez `npm run dev`. Backend:
 
 Aplikacja: http://127.0.0.1:5173. Konfiguracja S3: [backend/S3.md](backend/S3.md).
 
+## Pomoc i dokumentacja w aplikacji
+
+Pozycja **Pomoc** w menu otwiera wyszukiwane instrukcje modułów. Każdy moduł ma
+rozwijany opis z krótką instrukcją i przyciskiem **Pełna instrukcja**. Ikona książki
+w nagłówku również otwiera pomoc dotyczącą bieżącego modułu.
+Pomoc obejmuje codzienną pracę, edytor, historię, wysyłanie plików i akceptacje.
+Administrator ma dodatkowo instrukcje uprawnień oraz konfiguracji klucza poczty.
+Temat eDoręczenia opisuje rejestr, różnice między kluczem Fernet, certyfikatem X.509
+i tokenem API oraz procedurę dodania systemu zewnętrznego i przygotowania CSR.
+Odnośniki do oficjalnych materiałów pozwalają sprawdzić aktualne wymagania operatora.
+Treść pomocy jest utrzymywana w `src/helpContent.js`; nie zawiera sekretów z `.env`.
+
+## eDoręczenia
+
+Pozycja eDoręczenia w menu otwiera prywatny rejestr przesyłek zapisany w bazie PostgreSQL.
+Możesz dodawać, edytować i usuwać wpisy: temat, nadawca lub odbiorca, adres do
+eDoręczeń, numer przesyłki, kierunek, status, datę i notatki. Rejestr ma wyszukiwanie
+oraz filtry kierunku i statusu. Wpisy są widoczne tylko dla właściciela; edycja
+sprawdza wersję, aby chronić przed nadpisaniem zmian z innej sesji.
+Przycisk Otwórz skrzynkę otwiera https://edoreczenia.gov.pl/ w nowej karcie.
+Przycisk **Konfiguracja skrzynki** zapisuje prywatne połączenie z Poczta Polska UA API v3 (PROD).
+Podaj ADE, dokładną nazwę zarejestrowanego systemu zewnętrznego, certyfikat X.509
+i odpowiadający mu klucz prywatny PEM (RSA >= 2048 lub EC P-256/P-384/P-521),
+opcjonalnie hasło klucza. Klucz musi być eksportowalny; podpisy z HSM lub zdalnego
+dostawcy bez PEM wymagają osobnego adaptera. Dane prywatne są szyfrowane kluczem
+`EDOCUMENTS_MAIL_SETTINGS_KEY` i nie są zwracane przez API. **Zapisz i sprawdź**
+weryfikuje uwierzytelnienie signedJWT i dostęp do metadanych; zapis konfiguracji
+sam w sobie nie potwierdza upoważnienia u operatora.
+
+**Synchronizuj skrzynkę** pobiera metadane do 500 najnowszych przesyłek elektronicznych,
+aktualizuje statusy i deduplikuje po koncie, ADE i ID wiadomości. Nie pobiera pełnej
+treści lub załączników, nie oznacza przesyłki jako otwartej i nie wysyła korespondencji.
+Wpisy synchronizowane mają dane i oryginalny status z API; nie można ich ręcznie
+edytować. Usunięcie wpisu jest lokalne i kolejna synchronizacja może go przywrócić.
+Sieć jest wywoływana przed transakcją zapisu; zmiana konfiguracji podczas operacji
+przerywa import. Błąd operatora nie nadpisuje rejestru. **Odłącz skrzynkę** usuwa
+dane dostępowe z konta, zachowując rejestr. Ręczne dodawanie pozostaje dostępne.
+Testy klienta API używają atrap odpowiedzi; połączenie produkcyjne wymaga
+aktywnego systemu zewnętrznego i certyfikatu użytkownika. Oficjalny kontrakt:
+[UA API](https://www.gov.pl/web/e-doreczenia/interfejsy-api),
+[uwierzytelnienie PROD](https://www.gov.pl/attachment/d48d0188-cc7a-42c2-8497-99da442ef9ce).
+
+Tabele `edelivery_records`, `edelivery_connections` i `edelivery_imports` powstają przy starcie
+nowej wersji backendu. API rejestru: `GET/POST /api/edeliveries` oraz
+`PATCH/DELETE /api/edeliveries/{id}`. Konfiguracja: `GET/PUT/DELETE /api/edeliveries/connection`,
+test: `POST /api/edeliveries/connection/test`, synchronizacja: `POST /api/edeliveries/sync`.
+Pozycja jest dostępna dla wszystkich
+zalogowanych użytkowników; kolejność jest zapisywana razem z pozostałym menu.
+
 ## Użytkownicy, grupy i uprawnienia
+
+Każdy użytkownik jest przypisany do jednej firmy przez wymagane `company_id`.
+Przy aktualizacji obecne konta i grupy trafiają do **Firmy domyślnej**. Można ją
+nazwać i uzupełnić właściwymi danymi w katalogu. Jest to przypisanie organizacyjne;
+dotychczasowe dokumenty pozostają przypisane do ich autorów i nadal obowiązują
+ustawienia udostępnienia zasobów.
+
+**Katalog firm** jest dostępny wyłącznie dla jednego superadministratora.
+Serwerowa zmienna `EDOCUMENTS_SUPERADMIN_ACCOUNT=biuro@mdriver.pl` wskazuje
+istniejące konto po nazwie lub unikalnym e-mailu. Przy pierwszym dopasowaniu rola
+wiąże się ze stałym ID konta w bazie; zmiana e-maila lub zmiennej nie przenosi roli.
+Nie tworzymy nowego konta ani hasła automatycznie. Jeżeli konto nie istnieje,
+katalog pozostaje niedostępny do chwili jego utworzenia i ponownego uruchomienia
+backendu. Indeks w bazie dopuszcza tylko jednego superadministratora; interfejs
+API nie pozwala zablokować ani zdegradować tego konta przez panel.
+
+Superadministrator tworzy i edytuje firmy (nazwa, NIP, adres, e-mail, telefon)
+oraz przypisuje konta do firm w module **Użytkownicy i grupy**. Zwykły administrator
+widzi i zarządza tylko użytkownikami, grupami i zakresem folderów swojej firmy.
+Grupa przyjmuje tylko użytkowników swojej firmy, a jej uprawnienia grupowe
+dotyczą zasobów tej firmy. Przeniesienie konta usuwa jego członkostwa w grupach
+i unieważnia sesje oraz tokeny API; pliki pozostają na koncie. Firma z kontami
+lub grupami nie może zostać usunięta; firmy domyślnej również nie usuwamy.
+API katalogu: `GET/POST /api/admin/companies`,
+`PATCH/DELETE /api/admin/companies/{id}`. `GET /api/me/company` zwraca tylko
+firmę bieżącego konta.
+
+W module **Użytkownicy i grupy** przycisk kosza usuwa konto po potwierdzeniu.
+Administrator może usuwać konta swojej firmy, a superadministrator — wszystkich firm.
+Nie można usunąć własnego konta, superadministratora ani ostatniego aktywnego
+administratora firmy. Konto z dokumentami lub innymi powiązanymi danymi wymaga
+wcześniejszego usunięcia tych danych; można też zamiast tego zablokować konto.
+Usunięcie kończy sesje, unieważnia klucze API i usuwa członkostwa oraz uprawnienia.
+API: `DELETE /api/admin/users/{id}` (204; 409 dla kont chronionych lub z danymi).
+
+Superadministrator ma przy aktywnych kontach przycisk **Wejdź na konto**.
+Tryb klienta używa drugiego cookie HttpOnly i osobnej sesji, powiązanej z oryginalną
+sesją administratora; hasło klienta nie jest odczytywane ani zmieniane. Widoczny
+pasek wskazuje konto oraz firmę klienta i daje **Wróć na konto administratora**.
+Przełączenie przeładowuje aplikację, aby nie zachować danych lub formularzy
+poprzedniego konta. Tryb wygasa po maksymalnie 30 minutach i wymaga nadal aktywnego
+superadministratora. Konta nieaktywne i konto samego superadministratora są wyłączone.
+
+W trybie klienta obowiązują jego zwykłe uprawnienia do zasobów. Zmiany są rzeczywiste;
+blokujemy zarządzanie administracją, hasłami i kluczami API oraz kolejne wejście
+na inne konto. Konto z hasłem tymczasowym można obejrzeć bez zmiany jego hasła;
+wymóg pierwszej zmiany hasła w bazie pozostaje zachowany dla klienta.
+Zmiana firmy, reset hasła lub dezaktywacja klienta cofa jego sesje delegowane.
+Nagłówek `X-Account-ID` chroni żądania aplikacji przed użyciem starego kontekstu
+konta w innej karcie. Wylogowanie usuwa także oryginalną sesję administratora.
+
+**Historia wejść na konta** w administracji pokazuje ostatnie 100 wejść i powrotów,
+rzeczywistego administratora, klienta, firmę i czas. Historia zasobów wskazuje
+administratora działającego na koncie klienta jako autora zmian. API:
+`POST /api/admin/users/{id}/impersonate`, `POST /api/admin/impersonation/stop`,
+`GET /api/admin/impersonation/events`. Rozpoczęcie wymaga sesji przeglądarki
+superadministratora; klucze API nie mogą uruchamiać trybu klienta.
 
 Pierwsze konto utworzone podczas konfiguracji jest administratorem.
 Nowy użytkownik dodawany przez administratora musi mieć adres e-mail.
@@ -501,4 +607,6 @@ Menu **Poczta Klienta** otwiera listę wiadomości, podgląd treści i panel ana
 
 Po aktualizacji uruchom ponownie backend, aby utworzyć tabele client_mail i client_mail_attachments oraz udostępnić endpointy /api/client-mail. Frontend buduje się poleceniem npm run build.
 
-Hasła kont pocztowych są szyfrowane biblioteką cryptography (Fernet), nie są zwracane przez API i nie trafiają do konfiguracji jawnej w bazie. Klucz określa opcjonalne EDOCUMENTS_MAIL_SETTINGS_KEY; bez tej zmiennej aplikacja tworzy data/mail-settings.key. Zachowaj klucz wraz z kopiami bazy, aby po odtworzeniu można było odszyfrować hasła. Compose przechowuje katalog data w trwałym wolumenie mail-settings-data. Przy wielu instancjach ustaw ten sam klucz na wszystkich serwerach. Nowa tabela client_mail_settings powstaje podczas uruchomienia backendu.
+Hasła kont pocztowych są szyfrowane biblioteką cryptography (Fernet), nie są zwracane przez API i nie trafiają do konfiguracji jawnej w bazie. Klucz jest pobierany wyłącznie ze zmiennej środowiskowej `EDOCUMENTS_MAIL_SETTINGS_KEY`. Lokalnie backend wczytuje `.env` przy starcie; Docker Compose przekazuje `.env` do kontenera. Brak lub niepoprawna wartość blokuje zapis i odczyt haseł z błędem 503. Aplikacja nie tworzy ani nie odczytuje pliku klucza.
+
+Przy aktualizacji instalacji używającej `data/mail-settings.key` skopiuj jego dotychczasową zawartość do `EDOCUMENTS_MAIL_SETTINGS_KEY` w serwerowym `.env`. Zachowaj ten sam klucz wraz z kopiami bazy i na wszystkich instancjach, aby nadal odczytywać zapisane hasła. Zmiana klucza nie odszyfruje istniejących ustawień. Po zmianie `.env` odtwórz kontener poleceniem `docker compose up -d --force-recreate app`; samo `docker compose restart` nie odświeża zmiennych kontenera. Nowa tabela `client_mail_settings` powstaje podczas uruchomienia backendu.
