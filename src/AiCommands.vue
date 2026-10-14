@@ -106,7 +106,7 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
 
 <template>
 <section class="ai-commands">
-  <header class="commands-heading"><div class="commands-title"><span class="ai-command-icon"><Mail :size="24" /></span><div><h1>Wiadomości</h1><p>Rozmowy, powiadomienia i historia wysyłek w jednym miejscu.</p></div></div>
+  <header class="commands-heading"><Teleport to="#workspace-title"><div class="commands-title"><span class="ai-command-icon"><Mail :size="24" /></span><div><h1>Wiadomości</h1><p>Rozmowy, powiadomienia i historia wysyłek w jednym miejscu.</p></div></div></Teleport>
     <div class="heading-actions"><button :disabled="busy" @click="openCompose('manual')"><Plus :size="16" /> Nowa wiadomość</button><button class="primary" :disabled="busy" @click="openCompose('ai')"><Sparkles :size="16" /> Nowa wiadomość AI</button><button class="icon-button" :disabled="busy" aria-label="Odśwież wiadomości" @click="load"><RefreshCw :size="17" /></button></div>
   </header>
   <p v-if="error && !compose" class="error" role="alert">{{ error }}</p><p v-if="notice" class="command-notice" role="status">{{ notice }}</p>

@@ -5,9 +5,17 @@ import AdminPanel from './AdminPanel.vue'
 import PasswordChange from './PasswordChange.vue'
 import ThemePicker from './ThemePicker.vue'
 import BrandLogo from './BrandLogo.vue'
-import { Menu } from 'lucide-vue-next'
-import { House, CalendarDays } from 'lucide-vue-next'
+import WorkspaceMenu from './WorkspaceMenu.vue'
+import { Menu, House, CalendarDays, StickyNote } from 'lucide-vue-next'
 const StartPanel = defineAsyncComponent(() => import('./StartPanel.vue'))
+const ClientMail = defineAsyncComponent(() => import('./ClientMail.vue'))
+const NotesPanel = defineAsyncComponent(() => import('./NotesPanel.vue'))
+import { ensureDocumentsFolder } from './documentsFolder.js'
+const documentsFolderId = ref(null)
+const startNoteDraft = ref(null)
+const startAssistantPrompt = ref('')
+function startNote(draft) { startNoteDraft.value = draft; startNavigate('notes') }
+function askForNote() { startAssistantPrompt.value = 'Dodaj notatkę: '; startNavigate('start') }
 import ImagePreview from './ImagePreview.vue'
 import ImageEditor from './ImageEditor.vue'
 import FileEmailDialog from './FileEmailDialog.vue'
@@ -46,6 +54,21 @@ function openDriveFolder(id) {
   view.value = 'drive'
   navigateFolder(id)
   if (id === null) refreshActivity()
+}
+async function enterDocumentsFolder() {
+  const result = await ensureDocumentsFolder(api, user.value.id)
+  folders.value = result.folders
+  documentsFolderId.value = result.folder.id
+  currentFolder.value = result.folder.id
+  view.value = 'documents'
+  search.value = ''
+  typeFilter.value = 'Wszystkie'
+}
+async function openDocumentsFolder() {
+  await run(async () => {
+    await enterDocumentsFolder()
+    await loadDocuments()
+  })
 }
 
 const taskTarget = ref(null)
@@ -91,17 +114,40 @@ const activeSurveys = computed(() => surveyData.value.filter(item => !item.close
 const templates = ref([])
 const search = ref('')
 const view = ref('start')
+const sectionIcons = { start: House, mail: Mail, ai: Mail, tasks: ClipboardList, calendar: CalendarDays, notes: StickyNote, documents: Files, surveys: ClipboardCheck, drive: HardDrive, active: ClipboardCheck, templates: FileText, dictionaries: BookOpen, admin: Users }
+
 const startAiPrompt = ref('')
 function startCommand(prompt) { startAiPrompt.value = prompt; startNavigate('ai') }
-function startDocument(draft) { if (!rootRights.value.add) { error.value = 'Brak uprawnienia do dodawania dokumentów.'; return }; currentFolder.value = null; view.value = 'drive'; search.value = ''; editorTab.value = 'document'; editor.value = { ...draft, folder_id: null } }
+async function startDocument(draft) {
+  await run(async () => {
+    await enterDocumentsFolder()
+    if (!canAddCurrent.value) throw new Error('Brak uprawnienia do dodawania dokumentów w katalogu Dokumenty.')
+    editorTab.value = 'document'
+    editor.value = { ...draft, folder_id: currentFolder.value }
+  })
+}
 async function startScheduled() { startNavigate('calendar'); await run(loadDocuments) }
+const startSurveyDraft = ref(null)
+function startSurvey(draft) { startSurveyDraft.value = draft; startNavigate('surveys'); surveyFilter.value = 'own' }
 const startSurveyId = ref(null)
 const surveyFilter = ref('all')
 function startNavigate(target) {
+  if (target === 'documents') { openDocumentsFolder(); return }
   startSurveyId.value = null
   surveyFilter.value = target === 'surveys' ? 'mine' : 'all'
   view.value = target
   search.value = ''
+}
+function menuNavigate(target) {
+  if (target === 'drive') { openDriveFolder(null); return }
+  if (target === 'surveys') {
+    startSurveyId.value = null
+    surveyFilter.value = 'all'
+    view.value = 'surveys'
+    search.value = ''
+    return
+  }
+  startNavigate(target)
 }
 function startOpenSurvey(survey) {
   startSurveyId.value = survey.id
@@ -121,6 +167,12 @@ function openAddDocument() {
   if (busy.value || !canAddCurrent.value) return
   error.value = ''
   addDocumentDialog.value = true
+}
+function openUploadPicker() {
+  if (busy.value || !canAddCurrent.value) return
+  error.value = ''
+  addDocumentDialog.value = false
+  fileInput.value?.click()
 }
 function chooseNewDocument(draft) {
   if (!canAddCurrent.value) return
@@ -161,7 +213,7 @@ const breadcrumbs = computed(() => {
     path.unshift(folder)
     folder = folders.value.find(item => item.id === folder.parent_id)
   }
-  return path
+  return view.value === 'documents' ? path.filter(folder => folder.id !== documentsFolderId.value) : path
 })
 const filteredFolders = computed(() => folders.value.filter(folder =>
   folder.parent_id === currentFolder.value && typeFilter.value === 'Wszystkie' &&
@@ -173,7 +225,7 @@ function navigateFolder(id) {
   typeFilter.value = 'Wszystkie'
 }
 async function openNewFolder() {
-  if (busy.value) return
+  if (busy.value || !canAddCurrent.value) return
   folderEditing.value = null
   folderName.value = ''
   folderAccessMode.value = ''
@@ -279,7 +331,14 @@ async function loadDocuments() {
   rootRights.value = await api('/access')
   taskData.value = await api('/tasks')
   surveyData.value = await api('/surveys')
-  if (currentFolder.value && !folders.value.some(folder => folder.id === currentFolder.value)) currentFolder.value = null
+  if (currentFolder.value && !folders.value.some(folder => folder.id === currentFolder.value)) {
+    currentFolder.value = null
+    if (view.value === 'documents') {
+      documentsFolderId.value = null
+      view.value = 'start'
+      error.value = 'Katalog Dokumenty jest już niedostępny. Otwórz sekcję Dokumenty ponownie.'
+    }
+  }
 }
 
 async function refreshAccess() {
@@ -326,6 +385,9 @@ async function login() {
     credentials.value.password = ''
     passwordNotice.value = ''
     setupRequired.value = false
+    startNoteDraft.value = null
+    startAssistantPrompt.value = ''
+    documentsFolderId.value = null
     view.value = 'start'
     currentFolder.value = null
     await loadDocuments()
@@ -385,6 +447,9 @@ async function logout() {
     await api('/logout', 'POST')
     user.value = null
     passwordDialog.value = false
+    startNoteDraft.value = null
+    startAssistantPrompt.value = ''
+    documentsFolderId.value = null
     accountMenu.value = false
     passwordNotice.value = ''
     documents.value = []
@@ -408,7 +473,7 @@ const date = value => new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium' }).
 let activityTimer, activityRefreshing = false, disposed = false
 function canRefreshActivity() {
   return !disposed && user.value && !user.value.must_change_password && !busy.value && !connecting.value && !document.hidden &&
-    ['start', 'drive', 'active'].includes(view.value) && !editor.value && !taskTarget.value && !emailFile.value && !imageEditorFile.value && !statusDocument.value && !folderDialog.value && !addDocumentDialog.value
+    ['start', 'drive', 'active', 'documents'].includes(view.value) && !editor.value && !taskTarget.value && !emailFile.value && !imageEditorFile.value && !statusDocument.value && !folderDialog.value && !addDocumentDialog.value
 }
 async function refreshActivity() {
   if (activityRefreshing || !canRefreshActivity()) return
@@ -447,28 +512,19 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-shell" :class="{ 'has-workspace': workspaceVisible }" @keydown.esc="sidebarOpen = false">
+  <div class="app-shell" :class="{ 'has-workspace': workspaceVisible, 'mail-section': workspaceVisible && view === 'mail' }" @keydown.esc="sidebarOpen = false">
     <header class="topbar">
       <div class="brand-area"><button v-if="workspaceVisible" class="icon-button sidebar-toggle" :aria-expanded="sidebarOpen" aria-controls="workspace-menu" :aria-label="sidebarOpen ? 'Zamknij menu' : 'Otwórz menu'" @click="sidebarOpen = !sidebarOpen"><Menu :size="22" /></button><a class="brand-link" href="/" aria-label="Space & Flow ? strona g??wna"><BrandLogo /></a></div>
+      <div v-if="workspaceVisible" class="workspace-heading"><span class="workspace-section-icon"><component :is="sectionIcons[view] || FileText" :size="24" /></span><div id="workspace-title"><div v-if="view === 'start' || view === 'drive'"><h1>{{ view === 'start' ? 'Start' : 'M?j dysk' }}</h1><p>{{ view === 'start' ? 'Twoje zadania, dokumenty i pomys?y w jednym miejscu.' : 'Twoje pliki i katalogi.' }}</p></div></div></div>
+      <div v-if="workspaceVisible" id="workspace-search" class="workspace-search"></div>
       <div v-if="user" class="account"><ThemePicker /><div class="account-menu"><button :disabled="busy" :aria-expanded="accountMenu" aria-controls="account-actions" @click="accountMenu = !accountMenu"><UserRound :size="18" /> {{ user.name }} <ChevronDown :size="16" /></button><div v-if="accountMenu" id="account-actions" class="account-actions"><button @click="passwordDialog = true; accountMenu = false"><LockKeyhole :size="17" /> Zmień hasło</button></div></div><button class="icon-button" aria-label="Wyloguj" :disabled="busy" @click="logout"><LogOut :size="19" /></button></div>
       <span v-else class="tagline">Twoja przestrzeń dokumentów</span>
     </header>
 
     <button v-if="workspaceVisible && sidebarOpen" class="sidebar-backdrop" aria-label="Zamknij menu" @click="sidebarOpen = false"></button>
     <div class="app-layout" :class="{ 'with-sidebar': workspaceVisible }">
-        <nav v-if="workspaceVisible" id="workspace-menu" class="workspace-sidebar" :class="{ open: sidebarOpen }" @click="sidebarOpen = false" aria-label="Przestrzeń robocza">
-          <div class="sidebar-heading"><span class="eyebrow">Menu</span><button class="icon-button sidebar-close" aria-label="Zamknij menu" @click="sidebarOpen = false"><X :size="20" /></button></div>
-          <button :class="{ active: view === 'start' }" :aria-current="(view === 'start') ? 'page' : undefined" @click="view = 'start'; search = ''"><House :size="18" /> Start</button>
-          <button :class="{ active: view === 'ai' }" :aria-current="(view === 'ai') ? 'page' : undefined" @click="view = 'ai'; search = ''"><Mail :size="18" /> Wiadomości</button>
-          <button :class="{ active: view === 'tasks' }" :aria-current="(view === 'tasks') ? 'page' : undefined" @click="view = 'tasks'; search = ''"><ClipboardList :size="18" /> Zadania <span v-if="tasksWaiting">({{ tasksWaiting }})</span></button>
-          <button :class="{ active: view === 'calendar' }" :aria-current="view === 'calendar' ? 'page' : undefined" @click="view = 'calendar'; search = ''"><CalendarDays :size="18" /> Terminarz</button>
-          <button :class="{ active: view === 'surveys' }" :aria-current="(view === 'surveys') ? 'page' : undefined" @click="startSurveyId = null; surveyFilter = 'all'; view = 'surveys'; search = ''"><ClipboardCheck :size="18" /> Ankiety ({{ activeSurveys }})</button>
-          <button :class="{ active: view === 'drive' || view === 'active' }" :aria-current="(view === 'drive' || view === 'active') ? 'page' : undefined" @click="openDriveFolder(null)"><HardDrive :size="18" /> Mój dysk</button>
-          <button :class="{ active: view === 'templates' }" :aria-current="(view === 'templates') ? 'page' : undefined" @click="view = 'templates'; search = ''"><FileText :size="18" /> Szablony</button>
-          <button :class="{ active: view === 'dictionaries' }" :aria-current="(view === 'dictionaries') ? 'page' : undefined" @click="view = 'dictionaries'; search = ''"><BookOpen :size="18" /> Słowniki</button>
-          <button v-if="user.role === 'admin'" :class="{ active: view === 'admin' }" :aria-current="(view === 'admin') ? 'page' : undefined" @click="view = 'admin'"><Users :size="18" /> Użytkownicy i grupy</button>
-        </nav>
-    <main id="workspace-content">
+        <WorkspaceMenu v-if="workspaceVisible" :user="user" :api="api" :view="view" :open="sidebarOpen" :tasks-waiting="tasksWaiting" :active-surveys="activeSurveys" @navigate="menuNavigate" @close="sidebarOpen = false" @order-saved="user = { ...user, menu_order: $event }" />
+    <main id="workspace-content" :class="{ 'mail-workspace': view === 'mail' }">
       <div v-if="error" class="error" role="alert"><span>{{ error }}</span><button :disabled="busy" @click="connect"><RefreshCw :size="16" /> Spróbuj ponownie</button></div>
       <p v-if="passwordNotice && user" class="success" role="status">{{ passwordNotice }}</p>
       <p v-if="connecting" class="loading" role="status">Łączenie z serwerem…</p>
@@ -496,12 +552,23 @@ onBeforeUnmount(() => {
       <PasswordChange v-else-if="user?.must_change_password" :api="api" required @saved="passwordSaved" />
       <template v-else-if="user">
 
-        <StartPanel v-if="view === 'start'" :user="user" :surveys="surveyData" :task-data="taskData" :busy="busy" :api="api" @document="startDocument" @scheduled="startScheduled" @navigate="startNavigate" @command="startCommand" @survey="startOpenSurvey" @refresh="run(loadDocuments)" />
-        <template v-else-if="view === 'drive'">
-          <nav class="breadcrumbs" aria-label="Ścieżka folderu"><button :disabled="busy" @click="navigateFolder(null)"><HardDrive :size="16" /> Mój dysk</button><template v-for="folder in breadcrumbs" :key="folder.id"><ChevronRight :size="15" /><button :disabled="busy" :aria-current="folder.id === currentFolder ? 'page' : undefined" @click="navigateFolder(folder.id)">{{ folder.name }}</button></template><button v-if="currentFolderInfo?.permissions?.read" class="icon-button" :disabled="busy" title="Historia katalogu" aria-label="Historia katalogu" @click="historyTarget = { ...currentFolderInfo, kind: 'folder' }"><History :size="17" /></button></nav>
+        <StartPanel v-if="view === 'start'" :user="user" :surveys="surveyData" :task-data="taskData" :busy="busy" :api="api" :initial-prompt="startAssistantPrompt" @prompt-consumed="startAssistantPrompt = ''" @note="startNote" @document="startDocument" @survey-draft="startSurvey" @scheduled="startScheduled" @navigate="startNavigate" @command="startCommand" @survey="startOpenSurvey" @refresh="run(loadDocuments)" />
+        <ClientMail v-else-if="view === 'mail'" :api="api" />
+        <NotesPanel v-else-if="view === 'notes'" :api="api" :initial-draft="startNoteDraft" @draft-consumed="startNoteDraft = null" @ai="askForNote" />
+        <template v-else-if="view === 'drive' || view === 'documents'">
+          <header v-if="view === 'documents'" class="documents-heading">
+            <Teleport to="#workspace-title"><div><h1>Dokumenty</h1><p>Dodawaj katalogi i dokumenty w bieżącym katalogu.</p></div></Teleport>
+            <div class="drive-actions">
+              <button :disabled="busy || !canAddCurrent" @click="openNewFolder"><FolderPlus :size="18" /> Dodaj katalog</button>
+              <button :disabled="busy || !canAddCurrent" @click="openUploadPicker"><Upload :size="18" /> Prześlij pliki</button>
+              <button class="primary" :disabled="busy || !canAddCurrent" @click="openAddDocument"><Plus :size="18" /> Dodaj dokument</button>
+            </div>
+            <p v-if="!canAddCurrent" class="muted">Nie masz uprawnienia do dodawania w tym katalogu.</p>
+          </header>
+          <nav class="breadcrumbs" aria-label="Ścieżka folderu"><button :disabled="busy" :aria-current="view === 'documents' && currentFolder === documentsFolderId ? 'page' : undefined" @click="navigateFolder(view === 'documents' ? documentsFolderId : null)"><Files v-if="view === 'documents'" :size="16" /><HardDrive v-else :size="16" /> {{ view === 'documents' ? '\\Dokumenty' : 'Mój dysk' }}</button><template v-for="folder in breadcrumbs" :key="folder.id"><ChevronRight :size="15" /><button :disabled="busy" :aria-current="folder.id === currentFolder ? 'page' : undefined" @click="navigateFolder(folder.id)">{{ folder.name }}</button></template><button v-if="currentFolderInfo?.permissions?.read" class="icon-button" :disabled="busy" title="Historia katalogu" aria-label="Historia katalogu" @click="historyTarget = { ...currentFolderInfo, kind: 'folder' }"><History :size="17" /></button></nav>
           <input ref="fileInput" class="file-picker" type="file" multiple aria-label="Wybierz pliki do przesłania" :disabled="busy" @change="uploadFiles($event.target.files)" />
           <p v-if="uploadProgress" class="muted" role="status">{{ uploadProgress }}</p>
-          <section class="toolbar drive-toolbar"><div class="search"><Search :size="18" /><input v-model="search" placeholder="Szukaj pliku…" aria-label="Szukaj pliku" /></div><div class="toolbar-controls"><select v-model="typeFilter" aria-label="Filtruj typ pliku"><option v-for="type in fileTypes" :key="type">{{ type }}</option></select><div class="layout-switch" role="group" aria-label="Widok plików"><button :aria-pressed="fileLayout === 'list'" title="Lista" aria-label="Widok listy" @click="changeFileLayout('list')"><List :size="19" /></button><button :aria-pressed="fileLayout === 'grid'" title="Kafelki" aria-label="Widok kafelków" @click="changeFileLayout('grid')"><LayoutGrid :size="19" /></button></div><div v-if="canAddCurrent" class="drive-actions"><button :disabled="busy" @click="openNewFolder"><FolderPlus :size="18" /> Nowy folder</button><button :disabled="busy" @click="fileInput.click()"><Upload :size="18" /> Prześlij pliki</button><button class="primary" :disabled="busy" @click="openAddDocument"><Plus :size="18" /> Dodaj plik</button></div></div></section>
+          <section class="toolbar drive-toolbar"><Teleport to="#workspace-search"><div class="search"><Search :size="18" /><input v-model="search" placeholder="Szukaj pliku…" aria-label="Szukaj pliku" /></div></Teleport><div class="toolbar-controls"><select v-model="typeFilter" aria-label="Filtruj typ pliku"><option v-for="type in fileTypes" :key="type">{{ type }}</option></select><div class="layout-switch" role="group" aria-label="Widok plików"><button :aria-pressed="fileLayout === 'list'" title="Lista" aria-label="Widok listy" @click="changeFileLayout('list')"><List :size="19" /></button><button :aria-pressed="fileLayout === 'grid'" title="Kafelki" aria-label="Widok kafelków" @click="changeFileLayout('grid')"><LayoutGrid :size="19" /></button></div><div v-if="canAddCurrent && view !== 'documents'" class="drive-actions"><button :disabled="busy" @click="openNewFolder"><FolderPlus :size="18" /> Dodaj katalog</button><button :disabled="busy" @click="openUploadPicker"><Upload :size="18" /> Prześlij pliki</button><button class="primary" :disabled="busy" @click="openAddDocument"><Plus :size="18" /> Dodaj dokument</button></div></div></section>
           <section class="panel drive-list" :class="{ 'drive-grid': fileLayout === 'grid' }" aria-label="Pliki na dysku">
             <div v-if="fileLayout === 'list'" class="drive-row drive-heading"><span>Nazwa</span><span>Rozmiar</span><span>Ostatnia zmiana</span><span>Akcje</span></div>
             <button v-if="!currentFolder" class="drive-row active-documents-tile" :disabled="busy" :aria-label="`Aktywne dokumenty: ${activeDocuments.length} wymagających działania. Otwórz listę.`" @click="openActiveDocuments">
@@ -519,13 +586,12 @@ onBeforeUnmount(() => {
               <span class="muted file-size">{{ formatSize(file.file_size) }}</span><span class="muted date">{{ date(file.updated_at) }}</span>
               <div class="file-actions"><button class="icon-button" :disabled="busy" :aria-label="`Historia zmian: ${file.filename || file.title}`" title="Historia zmian" @click="historyTarget = { ...file, kind: 'document' }"><History :size="17" /></button><button class="icon-button" :disabled="busy" :aria-label="`Dodaj zadanie do pliku ${file.filename || file.title}`" title="Dodaj zadanie" @click="addResourceTask(file)"><ClipboardPlus :size="18" /></button><button v-if="canViewEmails(file)" class="icon-button" :disabled="busy" :aria-label="`Wyślij e-mailem i sprawdź akceptacje: ${file.filename}`" title="Wyślij e-mailem / akceptacje" @click="emailFile = file"><Mail :size="18" /></button><button v-if="fileType(file.filename) === 'Obrazy'" class="icon-button" :disabled="busy" :aria-label="`Obraz i metadane: ${file.filename}`" title="Kadrowanie, rozdzielczość i metadane" @click="imageEditorFile = file"><Image :size="18" /></button><button v-if="file.permissions?.edit && fileType(file.filename) !== 'Obrazy'" class="icon-button" :disabled="busy" :aria-label="`Edytuj opis pliku ${file.filename || file.title}`" :title="file.filename ? 'Edytuj opis' : 'Edytuj dokument'" @click="openDocument(file)"><Pencil :size="17" /></button><a v-if="file.filename" class="download-button" :href="`/api/documents/${file.id}/file`" :aria-label="`Pobierz ${file.filename}`" title="Pobierz plik"><Download :size="19" /></a><button v-if="file.permissions?.delete" class="icon-button delete-button" :disabled="busy" :aria-label="`Usuń plik ${file.filename || file.title}`" title="Usuń plik" @click="deleteItem(file)"><Trash2 :size="18" /></button></div>
             </div>
-            <div v-if="!filteredFiles.length && !filteredFolders.length" class="empty"><Folder :size="39" /><h2>{{ search || typeFilter !== 'Wszystkie' ? 'Brak wyników' : currentFolder ? 'Ten folder jest pusty' : 'Twój dysk jest gotowy' }}</h2><p class="muted">{{ search || typeFilter !== 'Wszystkie' ? 'Zmień wyszukiwanie lub typ pliku.' : canAddCurrent ? 'Dodaj pliki lub utwórz folder, aby je uporządkować.' : 'Brak dostępnych plików. Dostęp do folderów nadaje administrator.' }}</p><button v-if="canAddCurrent" class="primary" :disabled="busy" @click="openAddDocument"><Plus :size="17" /> Dodaj plik</button></div>
+            <div v-if="!filteredFiles.length && !filteredFolders.length" class="empty"><Folder :size="39" /><h2>{{ search || typeFilter !== 'Wszystkie' ? 'Brak wyników' : currentFolder ? 'Ten folder jest pusty' : 'Twój dysk jest gotowy' }}</h2><p class="muted">{{ search || typeFilter !== 'Wszystkie' ? 'Zmień wyszukiwanie lub typ pliku.' : canAddCurrent ? 'Dodaj pliki lub utwórz folder, aby je uporządkować.' : 'Brak dostępnych plików. Dostęp do folderów nadaje administrator.' }}</p><button v-if="canAddCurrent" class="primary" :disabled="busy" @click="openAddDocument"><Plus :size="17" /> Dodaj dokument</button></div>
           </section>
-          <FolderTasks v-if="currentFolderInfo" :folder="currentFolderInfo" :task-data="taskData" :busy="busy" @add-task="addResourceTask($event, true)" @open-tasks="view = 'tasks'; search = ''" />
         </template>
         <ActiveDocuments v-else-if="view === 'active'" :documents="activeDocuments" :folders="folders" :busy="busy" @back="openDriveFolder(null)" @refresh="run(loadDocuments)" @open-document="openDocument" @open-image="imageEditorFile = $event" @open-email="emailFile = $event" @change-status="statusDocument = $event" @open-folder="openDriveFolder" />
         <AiCommands v-else-if="view === 'ai'" :api="api" :initial-prompt="startAiPrompt" @prompt-consumed="startAiPrompt = ''" />
-        <SurveysPanel v-else-if="view === 'surveys'" :api="api" :initial-survey-id="startSurveyId" :initial-filter="surveyFilter" @loaded="surveyData = $event" />
+        <SurveysPanel v-else-if="view === 'surveys'" :api="api" :initial-survey-id="startSurveyId" :initial-filter="surveyFilter" :initial-draft="startSurveyDraft" @draft-consumed="startSurveyDraft = null" @loaded="surveyData = $event" />
         <DictionariesPanel v-else-if="view === 'dictionaries'" :api="api" />
         <CalendarPanel v-else-if="view === 'calendar'" :api="api" :documents="documents" :folders="folders" @loaded="taskData = $event" @open-tasks="view = 'tasks'; search = ''" @open-document="openDocument" @open-folder="openDriveFolder" @new-task="taskTarget = {}" />
         <TasksPanel v-else-if="view === 'tasks'" :api="api" :current-user="user" :documents="documents" :folders="folders" @open-folder="openDriveFolder" @loaded="taskData = $event" @updated="run(loadDocuments)" @open-document="openDocument" @open-email="emailFile = $event" />
@@ -537,14 +603,14 @@ onBeforeUnmount(() => {
 
     <div v-if="passwordDialog && user && !user.must_change_password" class="modal-backdrop"><PasswordChange :api="api" @close="passwordDialog = false" @saved="passwordSaved" /></div>
     <ResourceHistory v-if="historyTarget && user" :resource="historyTarget" :api="api" @close="historyTarget = null" />
-    <AddDocumentDialog v-if="addDocumentDialog && user" :templates="templates" :api="api" :folder-id="currentFolder" :folder-name="currentFolderInfo?.name" @close="addDocumentDialog = false" @choose="chooseNewDocument" />
+    <AddDocumentDialog v-if="addDocumentDialog && user" :templates="templates" :api="api" :folder-id="currentFolder" :folder-name="currentFolderInfo?.name" @close="addDocumentDialog = false" @choose="chooseNewDocument" @upload="openUploadPicker" />
     <DocumentStatusDialog v-if="statusDocument && user" :document="statusDocument" :api="api" @close="statusDocument = null" @saved="statusSaved" />
     <TasksPanel v-if="taskTarget && user" dialog-only :initial-target="taskTarget" :api="api" :current-user="user" :documents="documents" :folders="folders" @close="taskTarget = null" @updated="run(loadDocuments)" />
     <FileEmailDialog v-if="emailFile && user" :file="emailFile" :api="api" @close="emailFile = null" @updated="emailUpdated" />
     <ImageEditor :task-data="taskData" v-if="imageEditorFile && user" :file="imageEditorFile" :api="api" @close="imageEditorFile = null" @saved="imageSaved" />
     <div v-if="folderDialog" class="modal-backdrop">
       <section class="panel folder-dialog" role="dialog" aria-modal="true" aria-labelledby="folder-dialog-title">
-        <div class="editor-heading"><h2 id="folder-dialog-title">{{ folderEditing ? 'Zmień nazwę folderu' : 'Nowy folder' }}</h2><button class="icon-button" :disabled="busy" aria-label="Zamknij" @click="folderDialog = false"><X :size="21" /></button></div>
+        <div class="editor-heading"><h2 id="folder-dialog-title">{{ folderEditing ? 'Zmień nazwę folderu' : 'Dodaj katalog' }}</h2><button class="icon-button" :disabled="busy" aria-label="Zamknij" @click="folderDialog = false"><X :size="21" /></button></div>
         <p class="muted">W: {{ currentFolderInfo?.name || 'Mój dysk' }}</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <form @submit.prevent="createFolder">

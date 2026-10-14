@@ -1,10 +1,10 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { FilePlus2, BookOpen, X, ArrowRight, FileText, Sparkles } from 'lucide-vue-next'
+import { FilePlus2, BookOpen, X, ArrowRight, FileText, Sparkles, Upload } from 'lucide-vue-next'
 import AiPrompt from './AiPrompt.vue'
 
 const props = defineProps({ templates: { type: Array, default: () => [] }, folderName: String, folderId: { type: String, default: null }, api: Function })
-const emit = defineEmits(['close', 'choose'])
+const emit = defineEmits(['close', 'choose', 'upload'])
 const source = ref('blank')
 const generating = ref(false)
 const templateId = ref('')
@@ -17,14 +17,18 @@ function proceed() {
     content: item?.content || '', rich_content: item?.rich_content ? JSON.parse(JSON.stringify(item.rich_content)) : null
   })
 }
+function upload() {
+  if (!generating.value) emit('upload')
+}
 </script>
 
 <template>
   <div class="modal-backdrop" @keydown.esc="!generating && emit('close')">
     <section class="panel add-document-dialog" role="dialog" aria-modal="true" aria-labelledby="add-document-title">
-      <header><span class="dialog-mark"><FilePlus2 :size="22" /></span><div><h2 id="add-document-title">Dodaj plik</h2><p>Nowy dokument w: {{ folderName || 'Mój dysk' }}</p></div><button class="icon-button" :disabled="generating" aria-label="Zamknij" @click="emit('close')"><X :size="20" /></button></header>
+      <header><span class="dialog-mark"><FilePlus2 :size="22" /></span><div><h2 id="add-document-title">Dodaj dokument</h2><p>Nowy dokument w: {{ folderName || 'Mój dysk' }}</p></div><button class="icon-button" :disabled="generating" aria-label="Zamknij" @click="emit('close')"><X :size="20" /></button></header>
       <div class="dialog-body">
         <div class="source-options" role="group" aria-label="Sposób tworzenia dokumentu">
+          <button :disabled="generating" @click="upload"><Upload :size="24" /><strong>Z pliku</strong><span>Prześlij dokument z komputera.</span></button>
           <button :disabled="generating" :aria-pressed="source === 'blank'" @click="source = 'blank'"><FilePlus2 :size="24" /><strong>Nowy pusty</strong><span>Zacznij od czystej kartki.</span></button>
           <button :disabled="generating" :aria-pressed="source === 'template'" @click="source = 'template'"><BookOpen :size="24" /><strong>Z szablonu</strong><span>Wybierz gotowy wzór.</span></button>
           <button :disabled="generating" :aria-pressed="source === 'ai'" @click="source = 'ai'"><Sparkles :size="24" /><strong>Z AI</strong><span>Opisz, co stworzyć.</span></button>
@@ -51,7 +55,7 @@ header > div { flex: 1; min-width: 0; }
 h2 { font-size: 18px; margin: 0; }
 header p { font-size: 12px; margin: 6px 0 0; color: var(--muted); overflow-wrap: anywhere; }
 .dialog-body { padding: 24px; }
-.source-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.source-options { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .source-options button { display: flex; flex-direction: column; align-items: flex-start; padding: 20px; gap: 12px; background: var(--theme-surface-soft, #fbfbfd); border: 1px solid var(--border); border-radius: 12px; text-align: left; color: var(--muted); }
 .source-options button[aria-pressed='true'] { border-color: var(--theme-accent, #b5a7ee); background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 1px var(--theme-accent, #b5a7ee); }
 .source-options strong { font-size: 14px; color: var(--theme-text, #34384e); }

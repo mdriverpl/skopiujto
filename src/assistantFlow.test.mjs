@@ -82,6 +82,14 @@ test('message is forwarded for review without sending', async () => {
   assert.deepEqual(f.calls.map(c => c.path), ['/ai/assistant/plan'])
   assert.deepEqual(f.events, [['command', 'Wyślij wiadomość do zespołu']])
 })
+
+test('note is prepared without writing and opens a reviewable note draft', async () => {
+  const f = await form({ action: 'note', title: 'Ustalenia', description: 'Wysyłamy ofertę w piątek.', prompt: 'Zanotuj ustalenia' })
+  await f.state.submitCommand()
+  assert.deepEqual(f.calls.map(c => c.path), ['/ai/assistant/plan'])
+  assert.deepEqual(f.events, [['note', { title: 'Ustalenia', content: 'Wysyłamy ofertę w piątek.' }]])
+  assert.equal(f.closes(), 1)
+})
 test('clarification and generation failures stay in the dialog', async () => {
   const clarify = await form({ action: 'clarify', prompt: 'Zrób coś', explanation: 'Co mam przygotować?' })
   await clarify.state.submitCommand()
@@ -129,4 +137,14 @@ test('reset disconnects old microphone callbacks and aborts recognition', async 
     assert.equal(f.state.listening.value, false)
     assert.equal(f.state.command.value, '')
   } finally { delete globalThis.window }
+})
+test('survey command generates an unsaved survey draft and opens the survey form', async () => {
+  const draft = { title: 'Satysfakcja pracowników', description: 'Krótka ankieta',
+    questions: [{ id: 'q1', label: 'Jak oceniasz pracę?', type: 'select', required: true, options: ['Dobrze', 'Bardzo dobrze'] }] }
+  const f = await form({ action: 'survey', prompt: 'Zrób ankietę dla naszych pracowników' }, draft)
+  await f.state.submitCommand()
+  assert.deepEqual(f.calls.map(c => c.path), ['/ai/assistant/plan', '/ai/generate'])
+  assert.equal(f.calls[1].body.kind, 'survey')
+  assert.deepEqual(f.events, [['survey-draft', draft]])
+  assert.equal(f.closes(), 1)
 })

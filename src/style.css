@@ -1,5 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
+.with-sidebar > main.mail-workspace { max-width:none; padding:26px 20px 16px; }
+
+@media (max-width:650px) { .with-sidebar > main.mail-workspace { padding:20px 12px 40px; } }
+
 :root { font-family: Inter, system-ui, sans-serif; color: var(--text); background: var(--page-bg); font-synthesis: none; }
 * { box-sizing: border-box; }
 body { margin: 0; }
@@ -88,7 +92,7 @@ label { gap: 8px; font-size: 13px; font-weight: 500; }
 .brand-link { display: inline-flex; color: var(--text); text-decoration: none; flex-shrink: 0; }
 .sidebar-toggle, .sidebar-close, .sidebar-backdrop { display: none; }
 .has-workspace .topbar { padding: 0 24px; }
-.app-layout.with-sidebar { display: grid; grid-template-columns: 230px minmax(0, 1fr); max-width: 1500px; margin: 0 auto; align-items: start; }
+.app-layout.with-sidebar { display: grid; grid-template-columns: 230px minmax(0, 1fr); width:100%; max-width:none; margin:0; align-items:start; }
 .with-sidebar > main { width: 100%; min-width: 0; padding: 32px 28px 64px; }
 .workspace-sidebar { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 7px; padding: 30px 14px; min-height: calc(100dvh - 82px); border-right: 1px solid var(--border); background: var(--surface); }
 .sidebar-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 14px 15px; }
@@ -149,6 +153,10 @@ label { gap: 8px; font-size: 13px; font-weight: 500; }
 .drive-toolbar .search { flex: 1; min-width: 180px; }
 .drive-toolbar .toolbar-controls { flex-wrap: wrap; }
 .drive-actions button { white-space: nowrap; }
+.documents-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.documents-heading h1 { margin: 0; font-size: 24px; }
+.documents-heading p { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+.documents-heading .drive-actions { flex-wrap: wrap; }
 .document-open { border: none; padding: 0; background: transparent; text-align: left; color: inherit; max-width: 100%; }
 .document-open:hover { background: transparent; color: var(--accent); }
 .layout-switch { display: flex; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
@@ -219,4 +227,43 @@ legend { font-size: 13px; padding: 0 6px; }
   .drive-toolbar .drive-actions button { flex: 1; }
   .template-list .list-heading, .template-list .document-row { grid-template-columns: minmax(0, 1fr) 90px; }
   .template-preview-label { display: none; }
+}
+
+/* Shared section title and search stay in the application header. */
+.has-workspace .topbar { gap:20px; height:auto; min-height:94px; padding-top:12px; padding-bottom:12px; flex-wrap:wrap; }
+.workspace-heading { display:flex; align-items:center; gap:12px; min-width:0; flex:1; }
+.workspace-section-icon { display:flex; flex-shrink:0; padding:11px; border-radius:12px; background:var(--accent); color:var(--theme-on-accent,white); }
+#workspace-title { min-width:0; }
+#workspace-title h1 { font-size:23px; letter-spacing:-.6px; margin:0 0 5px; line-height:1.25; display:block; }
+#workspace-title h1 > svg, #workspace-title .eyebrow, #workspace-title .mail-logo, #workspace-title .ai-command-icon, #workspace-title .survey-icon, #workspace-title .ai-mark { display:none; }
+#workspace-title p, #workspace-title small { margin:0; font-size:11px; line-height:1.5; color:var(--muted); }
+#workspace-title h1 span, #workspace-title h1 small { font-size:12px; }
+#workspace-title .mail-title, #workspace-title .commands-title, #workspace-title .survey-title, #workspace-title .ai-heading-copy { display:block; }
+.workspace-search { width:clamp(220px,25vw,420px); margin-left:auto; }
+.workspace-search:empty { display:none; }
+#workspace-search .search, #workspace-search .mail-search { display:flex; align-items:center; flex-direction:row; gap:10px; width:100%; min-width:0; margin:0; padding:4px 12px; border:1px solid var(--border); background:var(--surface-soft); border-radius:12px; color:var(--muted); }
+#workspace-search input { display:block; padding:9px 0; border:0; background:transparent; font-size:12px; width:100%; }
+#workspace-search svg { flex-shrink:0; }
+.has-workspace .account { margin-left:0; }
+.documents-heading, .tasks-heading, .templates-heading, .calendar-heading, .commands-heading, .dictionary-heading, .survey-heading, .active-heading, .notes-page > header { justify-content:flex-end; }
+.drive-toolbar .toolbar-controls, .templates-toolbar .template-controls { margin-left:auto; }
+@media (max-width:1100px) { .has-workspace .brand-link { display:none; } .workspace-search { width:250px; } .has-workspace .account { gap:6px; } }
+@media (max-width:750px) { .has-workspace .topbar { gap:12px; } .workspace-heading { flex:1; } #workspace-title h1 { font-size:18px; } #workspace-title p, #workspace-title small { display:none; } .workspace-search { order:4; width:100%; } .workspace-section-icon { padding:8px; } }
+
+/* Align the mail heading with the content after the 230px sidebar. */
+@media (min-width:1001px) {
+  .has-workspace.mail-section .topbar { padding-left:24px; }
+  .has-workspace.mail-section .brand-area { flex:0 0 206px; }
+}
+
+/* Keep navigation at the viewport's left edge in every workspace view. */
+@media (min-width:1001px) {
+  .has-workspace .topbar { position:sticky; top:0; z-index:40; height:94px; min-height:94px; flex-wrap:nowrap; }
+  .has-workspace .brand-area { flex:0 0 214px; }
+  .workspace-sidebar { position:fixed; left:0; top:94px; bottom:0; width:230px; min-height:0; overflow-y:auto; z-index:30; }
+  .with-sidebar > main { grid-column:2; max-width:none; margin:0; }
+}
+
+@media (min-width:1251px) {
+  .with-sidebar > main.mail-workspace { display:flex; flex-direction:column; height:calc(100dvh - 94px); min-height:0; }
 }

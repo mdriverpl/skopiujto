@@ -3,8 +3,8 @@ import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { ClipboardCheck, Plus, X, Trash2, ArrowLeft, RefreshCw, Send, Users, CheckCircle2, BarChart3, Sparkles } from 'lucide-vue-next'
 import AiPrompt from './AiPrompt.vue'
 import SurveyScore from './SurveyScore.vue'
-const props = defineProps({ api: Function, initialSurveyId: String, initialFilter: String })
-const emit = defineEmits(['loaded'])
+const props = defineProps({ api: Function, initialSurveyId: String, initialFilter: String, initialDraft: Object })
+const emit = defineEmits(['loaded', 'draft-consumed'])
 const surveys = ref([]), recipients = ref([]), busy = ref(false), error = ref(''), notice = ref('')
 const filter = ref(props.initialFilter || 'all'), search = ref(''), creating = ref(false), current = ref(null), detailTab = ref('form')
 const title = ref(''), description = ref(''), questions = ref([]), selected = ref([]), recipientSearch = ref(''), answers = ref({})
@@ -158,6 +158,7 @@ function showResponseAnswer(response, question) {
   return item ? `${text} (${item.points} pkt)` : text
 }
 onMounted(async () => {
+  if (props.initialDraft) { await generatedSurvey(props.initialDraft); emit('draft-consumed') }
   timer = setInterval(() => { if (!busy.value && !creating.value && !aiDialog.value && !sendingSurvey.value && !current.value) load() }, 15000)
   await load()
   if (!disposed && props.initialSurveyId) await openSurvey({ id: props.initialSurveyId })
@@ -174,7 +175,7 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
       </section>
     </div>
     <template v-if="!current">
-<header class="survey-heading"><div class="survey-title"><span class="survey-icon"><ClipboardCheck :size="24" /></span><div><h1>Ankiety</h1><p>Zbieraj odpowiedzi i sprawdzaj postęp wypełnienia.</p></div></div><div class="survey-actions"><button :disabled="busy || aiBusy" @click="openAi"><Sparkles :size="17" /> Dodaj z AI</button><button class="primary" :disabled="busy || aiBusy" @click="newSurvey"><Plus :size="17" /> Nowa ankieta</button></div></header>
+<header class="survey-heading"><Teleport to="#workspace-title"><div class="survey-title"><span class="survey-icon"><ClipboardCheck :size="24" /></span><div><h1>Ankiety</h1><p>Zbieraj odpowiedzi i sprawdzaj postęp wypełnienia.</p></div></div></Teleport><div class="survey-actions"><button :disabled="busy || aiBusy" @click="openAi"><Sparkles :size="17" /> Dodaj z AI</button><button class="primary" :disabled="busy || aiBusy" @click="newSurvey"><Plus :size="17" /> Nowa ankieta</button></div></header>
       <div class="survey-filters">
         <nav class="survey-tabs" aria-label="Widok ankiet">
           <button :disabled="busy || aiBusy" :aria-pressed="surveyView === 'list' && filter === 'all'" @click="surveyView = 'list'; filter = 'all'">Wszystkie</button>
@@ -182,13 +183,13 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
           <button :disabled="busy || aiBusy" :aria-pressed="surveyView === 'list' && filter === 'sent'" @click="surveyView = 'list'; filter = 'sent'">Utworzone przeze mnie</button>
           <button :disabled="busy || aiBusy" :aria-pressed="surveyView === 'library'" @click="surveyView = 'library'"><ClipboardCheck :size="16" /> Biblioteka ankiet specjalnych</button>
         </nav>
-        <input v-show="surveyView === 'list'" v-model="search" aria-label="Szukaj ankiety" placeholder="Szukaj ankiety…" />
+        <Teleport v-if="surveyView === 'list'" to="#workspace-search"><div class="search"><input v-model="search" aria-label="Szukaj ankiety" placeholder="Szukaj ankiety…" /></div></Teleport>
       </div>
       <div class="survey-stats"><div><span>Wypełnione</span><strong>{{ totals.completed }}</strong></div><div><span>Oczekiwane odpowiedzi</span><strong>{{ totals.expected }}</strong></div><div><span>Pozostało</span><strong>{{ totals.expected - totals.completed }}</strong></div></div>
     </template>
     <template v-else>
       <button class="survey-back" :disabled="busy" @click="current = null; error = ''; notice = ''"><ArrowLeft :size="16" /> Ankiety</button>
-      <header class="survey-heading"><div><h1>{{ current.title }}</h1><p>Autor: {{ current.owner_name }} · {{ date(current.created_at) }}</p></div><div class="survey-actions"><button v-if="current.is_owner && !current.closed_at" :disabled="busy" @click="openSend(current)"><Send :size="16" /> Wyślij do</button><button class="icon-button" :disabled="busy" aria-label="Odśwież odpowiedzi" @click="refreshCurrent"><RefreshCw :size="18" /></button><button v-if="current.is_owner && !current.closed_at" :disabled="busy" @click="closeSurvey">Zamknij ankietę</button><button v-if="current.is_owner" class="survey-delete" :disabled="busy" @click="deleteSurvey(current)"><Trash2 :size="16" /> Usuń ankietę</button><span v-if="current.closed_at" class="survey-badge">Zamknięta</span></div></header><p class="survey-description">{{ current.description }}</p>
+      <header class="survey-heading"><Teleport to="#workspace-title"><div><h1>{{ current.title }}</h1><p>Autor: {{ current.owner_name }} · {{ date(current.created_at) }}</p></div></Teleport><div class="survey-actions"><button v-if="current.is_owner && !current.closed_at" :disabled="busy" @click="openSend(current)"><Send :size="16" /> Wyślij do</button><button class="icon-button" :disabled="busy" aria-label="Odśwież odpowiedzi" @click="refreshCurrent"><RefreshCw :size="18" /></button><button v-if="current.is_owner && !current.closed_at" :disabled="busy" @click="closeSurvey">Zamknij ankietę</button><button v-if="current.is_owner" class="survey-delete" :disabled="busy" @click="deleteSurvey(current)"><Trash2 :size="16" /> Usuń ankietę</button><span v-if="current.closed_at" class="survey-badge">Zamknięta</span></div></header><p class="survey-description">{{ current.description }}</p>
       <div class="survey-progress panel"><div><strong>{{ current.completed }} / {{ current.expected }}</strong><span> wypełnionych · pozostało {{ current.expected - current.completed }}</span></div><progress :value="current.completed" :max="current.expected || 1" /></div>
       <nav class="survey-tabs"><button v-if="current.assigned" :aria-pressed="detailTab === 'form'" @click="detailTab = 'form'">{{ current.submitted_at ? 'Moja odpowiedź' : 'Wypełnij ankietę' }}</button><template v-if="current.is_owner"><button :aria-pressed="detailTab === 'responses'" @click="detailTab = 'responses'"><Users :size="16" /> Odpowiedzi</button><button :aria-pressed="detailTab === 'stats'" @click="detailTab = 'stats'"><BarChart3 :size="16" /> Statystyki</button></template></nav>
     </template>

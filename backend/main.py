@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import os
 import secrets
 from contextlib import contextmanager
@@ -11,11 +12,11 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Respon
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, APIKeyCookie
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
 from backend import storage, access, admin, images, mailing, workflow, richtext, ai, document_fields, ai_files, saved_data, tasks, dictionaries, dictionary_excel, ai_commands, surveys, audit
-from backend import database, api_tokens, assistant
+from backend import database, api_tokens, assistant, notes, client_mail, mail_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / '.env')
@@ -70,6 +71,9 @@ def initialize():
         c.executescript(mailing.SCHEMA)
         mailing.migrate(c)
         c.executescript(saved_data.SCHEMA)
+        c.executescript(notes.SCHEMA)
+        c.executescript(client_mail.SCHEMA)
+        c.executescript(mail_settings.SCHEMA)
         tasks.initialize(c)
         dictionaries.initialize(c)
         c.executescript(ai_commands.SCHEMA)
@@ -85,7 +89,8 @@ def initialize():
         for name, kind in [('role', "TEXT NOT NULL DEFAULT 'user'"), ('active', 'INTEGER NOT NULL DEFAULT 1'),
                            ('can_read', 'INTEGER NOT NULL DEFAULT 1'), ('can_edit', 'INTEGER NOT NULL DEFAULT 1'),
                            ('can_add', 'INTEGER NOT NULL DEFAULT 1'), ('can_delete', 'INTEGER NOT NULL DEFAULT 1'),
-                           ('email', 'TEXT'), ('must_change_password', 'INTEGER NOT NULL DEFAULT 0')]:
+                           ('email', 'TEXT'), ('must_change_password', 'INTEGER NOT NULL DEFAULT 0'),
+                           ('menu_order', "TEXT NOT NULL DEFAULT '[]'")]:
             if name not in user_columns:
                 c.execute(f'ALTER TABLE users ADD COLUMN {name} {kind}')
         if 'role' not in user_columns:
@@ -225,6 +230,25 @@ def logout(request: Request, response: Response):
 @app.get('/api/me')
 def me(current=Depends(user)):
     return current
+
+class MenuOrderInput(BaseModel):
+    menu_order: list[Literal['start', 'ai', 'mail', 'tasks', 'calendar', 'notes', 'documents',
+                             'surveys', 'drive', 'templates', 'dictionaries', 'admin']] = Field(max_length=12)
+
+    @field_validator('menu_order')
+    @classmethod
+    def unique_items(cls, value):
+        if len(value) != len(set(value)):
+            raise ValueError('Pozycje menu nie mogą się powtarzać.')
+        return value
+
+@app.put('/api/me/menu-order')
+def save_menu_order(body: MenuOrderInput, current=Depends(user)):
+    with db() as c:
+        c.begin_write()
+        c.execute('UPDATE users SET menu_order=? WHERE id=?',
+                  (json.dumps(body.menu_order), current['id']))
+    return {'menu_order': body.menu_order}
 
 class PasswordChange(BaseModel):
     current_password: str = Field(min_length=10, max_length=200)
@@ -852,6 +876,9 @@ dictionaries.install(app, db, user, now)
 dictionary_excel.install(app, db, user, now)
 ai_commands.install(app, db, user, now)
 assistant.install(app, user)
+notes.install(app, db, user, now)
+client_mail.install(app, db, user, now)
+mail_settings.install(app, db, user)
 surveys.install(app, db, user, now)
 audit.install(app, db, user)
 tasks.install(app, db, user, owned, now)

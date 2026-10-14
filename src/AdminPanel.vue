@@ -111,7 +111,7 @@ onMounted(() => run(load))
 </script>
 
 <template>
-  <section class="page-heading"><div><span class="eyebrow">Administracja</span><h1>Użytkownicy i uprawnienia</h1><p class="muted">Zarządzaj kontami i dostępem grup do dokumentów.</p></div><button class="primary" :disabled="busy" @click="editAccount()"><Plus :size="18" /> Dodaj użytkownika</button></section>
+  <section class="page-heading"><Teleport to="#workspace-title"><div><span class="eyebrow">Administracja</span><h1>Użytkownicy i uprawnienia</h1><p class="muted">Zarządzaj kontami i dostępem grup do dokumentów.</p></div></Teleport><button class="primary" :disabled="busy" @click="editAccount()"><Plus :size="18" /> Dodaj użytkownika</button></section>
   <p v-if="error" class="error" role="alert">{{ error }}</p>
   <p v-if="notice" class="success" role="status">{{ notice }}</p>
   <section class="panel admin-section">

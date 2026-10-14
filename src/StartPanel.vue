@@ -1,9 +1,9 @@
 <script setup>
-import { computed, ref, onBeforeUnmount } from 'vue'
-import { Bot, Sparkles, ArrowUpRight, ArrowRight, ClipboardCheck, CalendarDays, HardDrive, ListTodo, Mic, Square, X, RefreshCw } from 'lucide-vue-next'
+import { computed, ref, onBeforeUnmount, onMounted } from 'vue'
+import { Bot, Sparkles, ArrowUpRight, ArrowRight, ClipboardCheck, CalendarDays, HardDrive, ListTodo, Mic, Square, X, RefreshCw, StickyNote, FileText } from 'lucide-vue-next'
 import { startSummary } from './startSummary.js'
-const props = defineProps({ user: Object, surveys: Array, taskData: Object, busy: Boolean, api: Function })
-const emit = defineEmits(['navigate', 'survey', 'refresh', 'command', 'document', 'scheduled'])
+const props = defineProps({ user: Object, surveys: Array, taskData: Object, busy: Boolean, api: Function, initialPrompt: String })
+const emit = defineEmits(['navigate', 'survey', 'refresh', 'command', 'document', 'survey-draft', 'scheduled', 'note', 'prompt-consumed'])
 const summary = computed(() => startSummary(props.surveys, props.taskData))
 const today = new Intl.DateTimeFormat('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Warsaw' }).format(new Date())
 const date = value => new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'short' }).format(new Date(value))
@@ -126,11 +126,14 @@ async function submitCommand() {
     if (plan.action === 'message') {
       commandDialog.value?.close()
       emit('command', plan.prompt)
-    } else if (plan.action === 'document') {
-      assistantReply.value = 'Przygotowuję dokument…'
-      const draft = await props.api('/ai/generate', 'POST', { prompt: plan.prompt, kind: 'document', folder_id: null })
+    } else if (plan.action === 'document' || plan.action === 'survey') {
+      assistantReply.value = plan.action === 'survey' ? 'Przygotowuję ankietę…' : 'Przygotowuję dokument…'
+      const draft = await props.api('/ai/generate', 'POST', { prompt: plan.prompt, kind: plan.action, folder_id: null })
       commandDialog.value?.close()
-      emit('document', draft)
+      emit(plan.action === 'survey' ? 'survey-draft' : 'document', draft)
+    } else if (plan.action === 'note') {
+      commandDialog.value?.close()
+      emit('note', { title: plan.title, content: plan.description })
     } else if (plan.action === 'meeting' || plan.action === 'task') {
       assistantPlan.value = { ...plan, due_input: localInputDate(plan.due_at) }
     }
@@ -150,6 +153,9 @@ async function scheduleTask() {
   } catch (err) { assistantError.value = err.message }
   finally { assistantBusy.value = false }
 }
+onMounted(() => {
+  if (props.initialPrompt) { openCommand(); command.value = props.initialPrompt; emit('prompt-consumed') }
+})
 onBeforeUnmount(() => { if (recognition) { recognition.onresult = null; recognition.onerror = null; recognition.onend = null; recognition.abort() } })
 </script>
 <template>
@@ -167,12 +173,14 @@ onBeforeUnmount(() => { if (recognition) { recognition.onresult = null; recognit
       <button class="panel start-card task-summary" :disabled="busy" @click="emit('navigate', 'tasks')"><div class="summary-top"><span class="summary-icon"><ListTodo :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Zadania ({{ summary.tasks.length }})</h2><p>Sprawdź zadania czekające na wykonanie.</p><span class="summary-link">Otwórz zadania <ArrowRight :size="14" /></span></button>
       <button class="panel start-card drive-summary" :disabled="busy" @click="emit('navigate', 'drive')"><div class="summary-top"><span class="summary-icon"><HardDrive :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Dysk</h2><p>Twoje dokumenty, pliki i katalogi.</p><span class="summary-link">Otwórz dysk <ArrowRight :size="14" /></span></button>
       <button class="panel start-card survey-summary" :disabled="busy" @click="emit('navigate', 'surveys')"><div class="summary-top"><span class="summary-icon"><ClipboardCheck :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Ankieta</h2><p>{{ summary.surveys.length }} ankiet czeka na Twoją odpowiedź.</p><span class="summary-link">Otwórz ankiety <ArrowRight :size="14" /></span></button>
+      <button class="panel start-card drive-summary" :disabled="busy" @click="emit('navigate', 'notes')"><div class="summary-top"><span class="summary-icon"><StickyNote :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Notatki</h2><p>Zapisuj pomysły i ustalenia.</p><span class="summary-link">Otwórz notatki <ArrowRight :size="14" /></span></button>
+      <button class="panel start-card drive-summary" :disabled="busy" @click="emit('navigate', 'documents')"><div class="summary-top"><span class="summary-icon"><FileText :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Dokumenty</h2><p>Pliki i podkatalogi w katalogu Dokumenty.</p><span class="summary-link">Otwórz dokumenty <ArrowRight :size="14" /></span></button>
     </div>
     <dialog ref="commandDialog" class="panel start-ai-dialog modern-ai-dialog" aria-labelledby="start-ai-title" @close="stopDictation" @cancel="assistantBusy && $event.preventDefault()" @click="closeOnBackdrop">
-      <header class="start-ai-heading"><span class="dialog-avatar" aria-hidden="true"><Bot :size="27" /></span><div><span class="hero-label">Edzio do usług</span><h2 id="start-ai-title">Co dziś ogarniamy?</h2><p>Spotkanie, wiadomość, dokument? Powiedz mi jednym zdaniem.</p></div><button type="button" class="icon-button" :disabled="assistantBusy" aria-label="Zamknij rozmowę z Edziem" @click="commandDialog.close()"><X :size="20" /></button></header>
+      <header class="start-ai-heading"><span class="dialog-avatar" aria-hidden="true"><Bot :size="27" /></span><div><span class="hero-label">Edzio do usług</span><h2 id="start-ai-title">Co dziś ogarniamy?</h2><p>Spotkanie, wiadomość, dokument, notatka czy ankieta? Powiedz mi jednym zdaniem.</p></div><button type="button" class="icon-button" :disabled="assistantBusy" aria-label="Zamknij rozmowę z Edziem" @click="commandDialog.close()"><X :size="20" /></button></header>
       <div class="start-ai-body">
         <form v-if="!assistantPlan" class="start-command" @submit.prevent="submitCommand">
-          <div class="assistant-examples" aria-label="Przykładowe polecenia"><button type="button" :disabled="assistantBusy || listening" @click="useExample('Zaplanuj spotkanie jutro o 9:00.')"><CalendarDays :size="14" /> Spotkanie</button><button type="button" :disabled="assistantBusy || listening" @click="useExample('Przygotuj wiadomość do zespołu: ')"><ArrowUpRight :size="14" /> Wiadomość</button><button type="button" :disabled="assistantBusy || listening" @click="useExample('Zrób dokument: oferta dla naszych pracowników.')"><ClipboardCheck :size="14" /> Dokument</button></div>
+          <div class="assistant-examples" aria-label="Przykładowe polecenia"><button type="button" :disabled="assistantBusy || listening" @click="useExample('Dodaj notatkę: ustalenia ze spotkania — ')"><StickyNote :size="14" /> Notatka</button><button type="button" :disabled="assistantBusy || listening" @click="useExample('Zrób ankietę satysfakcji naszych pracowników: 5 pytań.')"><ClipboardCheck :size="14" /> Ankieta</button><button type="button" :disabled="assistantBusy || listening" @click="useExample('Zaplanuj spotkanie jutro o 9:00.')"><CalendarDays :size="14" /> Spotkanie</button><button type="button" :disabled="assistantBusy || listening" @click="useExample('Przygotuj wiadomość do zespołu: ')"><ArrowUpRight :size="14" /> Wiadomość</button><button type="button" :disabled="assistantBusy || listening" @click="useExample('Zrób dokument: oferta dla naszych pracowników.')"><ClipboardCheck :size="14" /> Dokument</button></div>
           <div class="assistant-composer">
           <label for="start-ai-command">Twoje polecenie</label>
           <textarea id="start-ai-command" autofocus v-model="command" @input="voiceError = ''" rows="4" maxlength="6000" :disabled="busy || assistantBusy || listening" placeholder="Napisz, co mam zrobić… albo wciśnij mikrofon i powiedz." />

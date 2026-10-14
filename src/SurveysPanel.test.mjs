@@ -6,10 +6,13 @@ import { compileScript, parse } from '@vue/compiler-sfc'
 import { ref, computed } from 'vue'
 const compiled = compileScript(parse(readFileSync(new URL('./SurveysPanel.vue', import.meta.url), 'utf8')).descriptor,
   { id: 'surveys-test' }).content.replace(/^import .*$/gm, '').replace('export default', 'globalThis.component =')
-function panel(api, confirm = () => true) {
-  const context = { ref, computed, AiPrompt: {}, SurveyScore: {}, onMounted() {}, onBeforeUnmount() {}, setInterval() {}, clearInterval() {}, crypto: { randomUUID: () => 'request_1234567890' }, window: { confirm } }
+function panel(api, confirm = () => true, initialDraft = null) {
+  const mounted = [], events = []
+  const context = { ref, computed, AiPrompt: {}, SurveyScore: {}, onMounted(callback) { mounted.push(callback) }, onBeforeUnmount() {}, setInterval() {}, clearInterval() {}, crypto: { randomUUID: () => 'request_1234567890' }, window: { confirm } }
   runInNewContext(compiled, context)
-  return context.component.setup({ api }, { expose() {}, emit() {} })
+  const state = context.component.setup({ api, initialDraft }, { expose() {}, emit: (...args) => events.push(args) })
+  state.mount = () => mounted[0](); state.events = events
+  return state
 }
 
 test('deletion requires ownership and confirmation, preserving state on cancellation', async () => {
@@ -197,4 +200,20 @@ test('failed send retains same request ID so a repeated attempt cannot resend a 
   await state.sendInvites(); await state.sendInvites()
   assert.equal(calls[0].request_id, calls[1].request_id)
   assert.equal(state.sendingSurvey.value.id, 'survey')
+})
+
+test('assistant survey draft opens an editable form without saving or sending', async () => {
+  const calls = []
+  const draft = { title: 'Opinie pracowników', description: 'Ankieta zespołu',
+    questions: [{ id: 'q1', label: 'Jak oceniasz atmosferę?', type: 'select', required: true, options: ['Dobrze', 'Bardzo dobrze'] }] }
+  const state = panel(async (path, method) => { calls.push({ path, method }); return [] }, () => true, draft)
+  await state.mount()
+  assert.equal(state.creating.value, true)
+  assert.equal(state.title.value, draft.title)
+  assert.equal(state.description.value, draft.description)
+  assert.equal(state.questions.value[0].optionsText, 'Dobrze\nBardzo dobrze')
+  assert.ok(state.events.some(event => event[0] === 'draft-consumed'))
+  assert.ok(calls.every(call => !call.method))
+  state.questions.value[0].label = 'Nowe pytanie'
+  assert.equal(draft.questions[0].label, 'Jak oceniasz atmosferę?')
 })

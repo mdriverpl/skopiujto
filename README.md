@@ -489,3 +489,16 @@ urządzenia, a kalendarz pokazuje godziny Europe/Warsaw.
 Integracja korzysta z konfiguracji OPENAI_API_KEY i OPENAI_MODEL oraz
 [Structured Outputs w Responses API](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses).
 Testy backend/test_assistant.py zastępują transport AI i nie wykonują płatnych zapytań.
+### Poczta Klienta
+
+Menu **Poczta Klienta** otwiera listę wiadomości, podgląd treści i panel analizy AI. Wiadomości, szkice, etykiety, gwiazdki i foldery są przechowywane w PostgreSQL osobno dla każdego użytkownika. Dostęp do załączników wymaga sesji właściciela wiadomości.
+
+- **Importuj .eml**: wczytanie wiadomości z załącznikami (maks. 10 MB). HTML jest zamieniany na tekst; zewnętrzne obrazy nie są ładowane. Synchronizacja IMAP nie jest jeszcze obsługiwana.
+- **Napisz / Odpowiedz / Przekaż**: edytowalna treść i zapis w folderze Robocze. Przekazanie kopiuje treść bez załączników. Wysyłanie załączników nie jest jeszcze obsługiwane.
+- **Ustawienia poczty** (ikona koła zębatego): adres e-mail, nazwa nadawcy i osobne dane SMTP oraz IMAP (serwer, port, SSL/TLS lub STARTTLS, login, hasło). Zapis dotyczy tylko bieżącego użytkownika. Puste hasło zachowuje zapisane hasło; zaznaczenie Usuń zapisane hasło usuwa je. Przycisk Zapisz i sprawdź testuje połączenie bez wysyłania lub pobierania wiadomości. Po zapisaniu konfiguracji IMAP przycisk Odśwież pocztę pobiera wiadomości z INBOX (do 100 na raz), bez duplikatów i bez oznaczania ich jako przeczytane na serwerze.
+- **Wyślij**: korzysta z zapisanej osobistej konfiguracji SMTP. Przed jej pierwszym zapisem dostępna jest konfiguracja SMTP serwera; wyłączenie osobistego SMTP blokuje wysyłkę z Poczty Klienta. Niepowodzenie zachowuje szkic. Folder Wysłane oznacza przyjęcie przez SMTP, nie potwierdzone doręczenie.
+- **Przeanalizuj wiadomość**: na żądanie przekazuje treść wiadomości do skonfigurowanego AI i zwraca podsumowanie, priorytet, zadania oraz propozycję odpowiedzi. Załączniki nie są analizowane. Użyj odpowiedzi otwiera edytor; wysyłka wymaga kliknięcia Wyślij.
+
+Po aktualizacji uruchom ponownie backend, aby utworzyć tabele client_mail i client_mail_attachments oraz udostępnić endpointy /api/client-mail. Frontend buduje się poleceniem npm run build.
+
+Hasła kont pocztowych są szyfrowane biblioteką cryptography (Fernet), nie są zwracane przez API i nie trafiają do konfiguracji jawnej w bazie. Klucz określa opcjonalne EDOCUMENTS_MAIL_SETTINGS_KEY; bez tej zmiennej aplikacja tworzy data/mail-settings.key. Zachowaj klucz wraz z kopiami bazy, aby po odtworzeniu można było odszyfrować hasła. Compose przechowuje katalog data w trwałym wolumenie mail-settings-data. Przy wielu instancjach ustaw ten sam klucz na wszystkich serwerach. Nowa tabela client_mail_settings powstaje podczas uruchomienia backendu.

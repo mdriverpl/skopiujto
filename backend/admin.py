@@ -1,4 +1,5 @@
 import secrets
+import json
 from backend import database
 from typing import Literal
 
@@ -41,6 +42,7 @@ class GrantInput(BaseModel):
 def public_account(row):
     data = dict(row)
     data.pop('password', None)
+    data['menu_order'] = json.loads(data.get('menu_order', '[]'))
     for key in ('active', 'can_read', 'can_edit', 'can_add', 'can_delete', 'must_change_password'):
         data[key] = bool(data[key])
     return data

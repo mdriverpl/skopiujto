@@ -14,7 +14,7 @@ def mocked_router(monkeypatch, action, **fields):
     monkeypatch.setattr(assistant, 'recognize', recognize)
 
 
-@pytest.mark.parametrize('action', ['message', 'document', 'meeting', 'task', 'clarify'])
+@pytest.mark.parametrize('action', ['message', 'document', 'survey', 'meeting', 'task', 'note', 'clarify'])
 def test_assistant_only_prepares_the_requested_operation_without_writing(app_client, monkeypatch, action):
     main, client = app_client
     mocked_router(monkeypatch, action, title='Spotkanie zespołu', description='Sala 4',
@@ -27,7 +27,7 @@ def test_assistant_only_prepares_the_requested_operation_without_writing(app_cli
         assert plan['assignee_id'] == client.get('/api/me').json()['id']
         assert plan['due_at'] == '2030-01-02T08:00:00Z'
     with main.db() as con:
-        for table in ('user_tasks', 'user_messages', 'documents', 'ai_command_jobs'):
+        for table in ('user_tasks', 'user_messages', 'documents', 'ai_command_jobs', 'notes'):
             assert con.execute('SELECT count(*) FROM ' + table).fetchone()[0] == 0
 
 
@@ -103,7 +103,7 @@ def test_provider_has_operation_schema_date_context_and_configured_model(app_cli
     request = requests[0]
     assert request['model'] == 'configured-model' and request['store'] is False
     assert request['text']['format']['strict'] is True
-    assert set(request['text']['format']['schema']['properties']['action']['enum']) == {'message', 'document', 'meeting', 'task', 'clarify'}
+    assert set(request['text']['format']['schema']['properties']['action']['enum']) == {'message', 'document', 'survey', 'meeting', 'task', 'note', 'clarify'}
     context = json.loads(request['input'])
     assert context['time_zone'] == 'Europe/Warsaw' and context['current_datetime']
     assert set(context) == {'command', 'current_datetime', 'time_zone'}

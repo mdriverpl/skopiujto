@@ -63,7 +63,7 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
 </script>
 <template>
 <section class="calendar-panel">
-  <header class="calendar-heading"><div><h1><CalendarDays :size="25" /> Terminarz</h1><p>Twoje zadania i terminy w jednym kalendarzu.</p></div><div class="calendar-actions"><button :disabled="refreshing" aria-label="Odśwież terminarz" @click="load()"><RefreshCw :size="16" /></button><button class="primary" @click="emit('new-task')"><Plus :size="16" /> Nowe zadanie</button></div></header>
+  <header class="calendar-heading"><Teleport to="#workspace-title"><div><h1><CalendarDays :size="25" /> Terminarz</h1><p>Twoje zadania i terminy w jednym kalendarzu.</p></div></Teleport><div class="calendar-actions"><button :disabled="refreshing" aria-label="Odśwież terminarz" @click="load()"><RefreshCw :size="16" /></button><button class="primary" @click="emit('new-task')"><Plus :size="16" /> Nowe zadanie</button></div></header>
   <p v-if="error" class="error" role="alert">{{ error }}</p>
   <p v-if="loading" class="muted" role="status">Wczytywanie terminarza…</p>
   <div class="calendar-layout">
