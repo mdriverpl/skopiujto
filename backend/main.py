@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
 from backend import storage, access, admin, images, mailing, workflow, richtext, ai, document_fields, ai_files, saved_data, tasks, dictionaries, dictionary_excel, ai_commands, surveys, audit
-from backend import database, api_tokens, assistant, notes, client_mail, mail_settings, edelivery, edelivery_connection, companies, impersonation
+from backend import database, api_tokens, assistant, notes, client_mail, mail_settings, mail_daily, edelivery, edelivery_connection, companies, impersonation
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / '.env')
@@ -73,10 +73,11 @@ def initialize():
         c.executescript(notes.SCHEMA)
         c.executescript(edelivery.SCHEMA)
         c.executescript(edelivery_connection.SCHEMA)
-        c.executescript(client_mail.SCHEMA)
+        client_mail.initialize(c)
         c.executescript(mail_settings.SCHEMA)
         tasks.initialize(c)
         dictionaries.initialize(c)
+        c.executescript(client_mail.mail_rules.SCHEMA)
         c.executescript(ai_commands.SCHEMA)
         c.executescript(surveys.SCHEMA)
         if 'scoring_profile' not in c.columns('surveys'):
@@ -603,6 +604,7 @@ def file_response(row, preview=False):
     media_type = 'application/octet-stream'
     if preview:
         media_type = {
+            '.pdf': 'application/pdf',
             '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
             '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
             '.svg': 'image/svg+xml', '.avif': 'image/avif', '.ico': 'image/vnd.microsoft.icon'
@@ -902,6 +904,7 @@ notes.install(app, db, user, now)
 edelivery_connection.install(app, db, user, now)
 edelivery.install(app, db, user, now)
 client_mail.install(app, db, user, now)
+mail_daily.install(app, db, user, now)
 mail_settings.install(app, db, user)
 surveys.install(app, db, user, now)
 audit.install(app, db, user)

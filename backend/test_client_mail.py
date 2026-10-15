@@ -70,6 +70,24 @@ def test_send_failure_retains_draft_success_is_not_sent_twice(app_client, monkey
     assert len(sent) == 1
 
 
+def test_message_labels_persist_and_invoice_label_is_counted_in_daily_report(app_client):
+    _, client = app_client
+    row = imported(client)
+    url = '/api/client-mail/' + row['id']
+    for label in ('urgent', 'invoice', 'offer', ''):
+        response = client.patch(url, json={'version': row['version'], 'label': label})
+        assert response.status_code == 200, response.text
+        row = response.json()
+        assert row['label'] == label
+        assert next(m for m in client.get('/api/client-mail').json() if m['id'] == row['id'])['label'] == label
+        if label == 'invoice':
+            from backend.mail_daily import parsed_day
+            report = client.get('/api/client-mail/day-report', params={'day': parsed_day(row['created_at']).isoformat()})
+            assert report.status_code == 200
+            assert report.json()['stats']['categories']['invoice'] == 1
+    assert client.patch(url, json={'version': row['version'], 'label': 'unknown'}).status_code == 422
+
+
 def test_draft_validation_and_edit_conflict(app_client):
     _, client = app_client
     for body in ({'subject': 'Header\r\nBcc: hacker@example.com'}, {'content': 'x' * 100001}):
@@ -107,3 +125,22 @@ def test_html_import_removes_active_content_and_external_images():
     parsed = client_mail.parse_message(message.as_bytes())
     assert 'Ważna oferta' in parsed['content']
     assert 'alert' not in parsed['content'] and 'tracker' not in parsed['content']
+
+
+def test_categories_persist_validate_and_require_owner_and_version(app_client):
+    _, client = app_client
+    message = imported(client)
+    url = '/api/client-mail/' + message['id']
+    assert message['category'] == ''
+    updated = client.patch(url, json={'version': message['version'], 'category': 'invoice'})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['category'] == 'invoice'
+    assert updated.json()['category_source'] == 'manual'
+    assert updated.json()['folder'] == 'inbox'
+    assert client.get('/api/client-mail').json()[0]['category'] == 'invoice'
+    assert client.patch(url, json={'version': 1, 'category': 'spam'}).status_code == 409
+    assert client.patch(url, json={'version': 2, 'category': 'unknown'}).status_code == 422
+    cleared = client.patch(url, json={'version': 2, 'category': ''})
+    assert cleared.status_code == 200 and cleared.json()['category'] == ''
+    create_reader(client); login(client, READER)
+    assert client.patch(url, json={'version': 3, 'category': 'spam'}).status_code == 404

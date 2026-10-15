@@ -10,7 +10,7 @@ from typing import Literal
 from email_validator import validate_email, EmailNotValidError
 from fastapi import Depends, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field, field_validator
-from backend import ai, mailer, mail_settings, mail_sync
+from backend import ai, mailer, mail_settings, mail_sync, mail_rules
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS client_mail(
@@ -26,6 +26,17 @@ CREATE TABLE IF NOT EXISTS client_mail_attachments(
 '''
 
 SCHEMA += mail_sync.SCHEMA
+
+Category = Literal['', 'spam', 'advertisement', 'invoice', 'payment', 'order', 'newsletter',
+                   'notification', 'correspondence', 'other']
+
+
+def initialize(con):
+    con.executescript(SCHEMA)
+    existing = con.columns('client_mail')
+    for column in ('category', 'category_source', 'category_reason'):
+        if column not in existing:
+            con.execute(f"ALTER TABLE client_mail ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
 class Draft(BaseModel):
     recipient: str = Field(default='', max_length=254)
@@ -45,7 +56,8 @@ class MailPatch(BaseModel):
     folder: Literal['inbox', 'archive', 'spam', 'trash'] | None = None
     unread: bool | None = None
     starred: bool | None = None
-    label: Literal['', 'urgent', 'reply', 'payment', 'info'] | None = None
+    label: Literal['', 'urgent', 'invoice', 'offer', 'reply', 'payment', 'info'] | None = None
+    category: Category | None = None
 
 class Analysis(BaseModel):
     summary: str = Field(max_length=4000)
@@ -99,8 +111,9 @@ def parse_message(raw):
 
 
 def install(app, db, user, now):
-    def serialize(con, row):
+    def serialize(con, row, rules_context=None):
         result = dict(row)
+        result.update(mail_rules.classify(row['sender_email'], rules_context if rules_context is not None else mail_rules.context(con, row['user_id'])))
         result['attachments'] = [dict(a) for a in con.execute(
             'SELECT id,name,size FROM client_mail_attachments WHERE mail_id=? ORDER BY id', (row['id'],))]
         return result
@@ -116,8 +129,76 @@ def install(app, db, user, now):
     @app.get('/api/client-mail')
     def listing(current=Depends(user)):
         with db() as con:
-            return [serialize(con, row) for row in con.execute(
+            rules_context = mail_rules.context(con, current['id'])
+            return [serialize(con, row, rules_context) for row in con.execute(
                 'SELECT * FROM client_mail WHERE user_id=? ORDER BY created_at DESC,id', (current['id'],))]
+
+    @app.get('/api/client-mail/summary')
+    def mailbox_summary(current=Depends(user)):
+        with db() as con:
+            row = con.execute("""SELECT COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE unread=1) AS unread,
+                COUNT(*) FILTER (WHERE unread=1 AND label='urgent') AS urgent
+                FROM client_mail WHERE user_id=? AND folder='inbox' AND category!='spam'""", (current['id'],)).fetchone()
+            return {key: int(row[key]) for key in ('total', 'unread', 'urgent')}
+
+    @app.get('/api/client-mail/companies')
+    def companies(current=Depends(user)):
+        with db() as con: return mail_rules.companies(con, current['id'])
+
+    @app.post('/api/client-mail/spam-scan')
+    def scan_spam(current=Depends(user)):
+        with db() as con:
+            con.begin_write()
+            return {'moved': mail_rules.scan_inbox(con, current['id'])}
+
+    @app.post('/api/client-mail/{identifier}/company')
+    def assign_company(identifier: str, body: mail_rules.CompanyLink, current=Depends(user)):
+        with db() as con:
+            con.begin_write()
+            row = owned(con, identifier, current); check_version(row, body.version)
+            mail_rules.link(con, current['id'], row['sender_email'], body, now)
+            con.execute('UPDATE client_mail SET version=version+1 WHERE id=?', (identifier,))
+            return owned(con, identifier, current)
+
+    @app.delete('/api/client-mail/{identifier}/company')
+    def remove_company(identifier: str, body: mail_rules.CompanyUnlink, current=Depends(user)):
+        with db() as con:
+            con.begin_write()
+            row = owned(con, identifier, current); check_version(row, body.version)
+            mail_rules.unlink_email(con, current['id'], row['sender_email'], body.entry_id)
+            return owned(con, identifier, current)
+
+    @app.post('/api/client-mail/{identifier}/spam-address')
+    def block_sender(identifier: str, body: MailPatch, current=Depends(user)):
+        with db() as con:
+            con.begin_write()
+            row = owned(con, identifier, current); check_version(row, body.version)
+            if row['safe']:
+                raise HTTPException(422, 'Zaufanego adresu lub domeny nie można oznaczyć jako spam.')
+            address = mail_rules.address(row['sender_email'])
+            con.execute('INSERT INTO client_mail_spam_addresses(user_id,address) VALUES(?,?) ON CONFLICT DO NOTHING',
+                        (current['id'], address))
+            changed = set()
+            for message in con.execute("SELECT id,sender_email FROM client_mail WHERE user_id=? AND folder IN ('inbox','archive')", (current['id'],)).fetchall():
+                try: candidate = mail_rules.address(message['sender_email'])
+                except HTTPException: continue
+                if candidate == address:
+                    con.execute("UPDATE client_mail SET folder='spam',version=version+1 WHERE id=?", (message['id'],))
+                    changed.add(message['id'])
+            if identifier not in changed:
+                con.execute('UPDATE client_mail SET version=version+1 WHERE id=?', (identifier,))
+            return owned(con, identifier, current)
+
+    @app.delete('/api/client-mail/{identifier}/spam-address')
+    def unblock_sender(identifier: str, body: MailPatch, current=Depends(user)):
+        with db() as con:
+            con.begin_write()
+            row = owned(con, identifier, current); check_version(row, body.version)
+            address = mail_rules.address(row['sender_email'])
+            con.execute('DELETE FROM client_mail_spam_addresses WHERE user_id=? AND address=?', (current['id'], address))
+            con.execute('UPDATE client_mail SET version=version+1 WHERE id=?', (identifier,))
+            return owned(con, identifier, current)
 
     @app.post('/api/client-mail/sync')
     def sync(current=Depends(user)):
@@ -137,9 +218,11 @@ def install(app, db, user, now):
         identifier = secrets.token_hex(16)
         with db() as con:
             con.begin_write()
+            incoming_folder = mail_rules.apply_incoming(con, current['id'], parsed['sender_email'], parsed['subject'], parsed['content'])
             con.execute('''INSERT INTO client_mail(id,user_id,sender_name,sender_email,recipient,subject,content,folder,unread,created_at)
-                VALUES(?,?,?,?,?,?,?,'inbox',1,?)''', (identifier, current['id'], parsed['sender_name'],
-                parsed['sender_email'], parsed['recipient'], parsed['subject'], parsed['content'], parsed['timestamp'] or now()))
+                VALUES(?,?,?,?,?,?,?,?,1,?)''', (identifier, current['id'], parsed['sender_name'],
+                parsed['sender_email'], parsed['recipient'], parsed['subject'], parsed['content'], incoming_folder, parsed['timestamp'] or now()))
+            mail_rules.mark_incoming(con, identifier, current['id'])
             for name, data in parsed['attachments']:
                 con.execute('INSERT INTO client_mail_attachments(id,mail_id,name,size,data) VALUES(?,?,?,?,?)',
                             (secrets.token_hex(16), identifier, name, len(data), data))
@@ -170,6 +253,12 @@ def install(app, db, user, now):
             con.begin_write(); row = owned(con, identifier, current); check_version(row, body.version)
             changes = body.model_dump(exclude_none=True, exclude={'version'})
             if not changes: return row
+            if row['safe'] and (changes.get('folder') == 'spam' or changes.get('category') == 'spam'):
+                raise HTTPException(422, 'Zaufanego adresu lub domeny nie można oznaczyć jako spam.')
+            if row['folder'] == 'spam' and changes.get('folder') == 'inbox' and row['category_source'] == 'local':
+                changes.update(category='', category_source='manual', category_reason='')
+            if 'category' in changes:
+                changes.update(category_source='manual', category_reason='')
             fields = ','.join(f'{key}=?' for key in changes)
             con.execute(f'UPDATE client_mail SET {fields},version=version+1 WHERE id=?',
                         (*[int(v) if isinstance(v, bool) else v for v in changes.values()], identifier))

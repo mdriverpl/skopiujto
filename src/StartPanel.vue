@@ -1,9 +1,15 @@
 <script setup>
-import { computed, ref, onBeforeUnmount, onMounted } from 'vue'
+import { computed, ref, onBeforeUnmount, onMounted, watch } from 'vue'
 import { Bot, Sparkles, ArrowUpRight, ArrowRight, ClipboardCheck, CalendarDays, HardDrive, ListTodo, Mic, Square, X, RefreshCw, StickyNote, FileText } from 'lucide-vue-next'
 import { startSummary } from './startSummary.js'
+import StartMailCard from './StartMailCard.vue'
+import StartOrbit from './StartOrbit.vue'
+import { readStartLayout, saveStartLayout } from './startLayout.js'
 const props = defineProps({ user: Object, surveys: Array, taskData: Object, busy: Boolean, api: Function, initialPrompt: String })
-const emit = defineEmits(['navigate', 'survey', 'refresh', 'command', 'document', 'survey-draft', 'scheduled', 'note', 'prompt-consumed'])
+const emit = defineEmits(['navigate', 'survey', 'refresh', 'command', 'document', 'survey-draft', 'scheduled', 'note', 'prompt-consumed', 'mail-analysis'])
+const startVersion = ref(readStartLayout(props.user?.id))
+watch(() => props.user?.id, id => { startVersion.value = readStartLayout(id) })
+function selectStartVersion(version) { startVersion.value = version; saveStartLayout(props.user?.id, version) }
 const summary = computed(() => startSummary(props.surveys, props.taskData))
 const today = new Intl.DateTimeFormat('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Warsaw' }).format(new Date())
 const date = value => new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'short' }).format(new Date(value))
@@ -160,6 +166,9 @@ onBeforeUnmount(() => { if (recognition) { recognition.onresult = null; recognit
 </script>
 <template>
   <section class="start-page">
+    <div class="start-version-bar"><span>Twój pulpit <small>{{ today }}</small></span><div role="group" aria-label="Wersja strony startowej"><button :aria-pressed="startVersion === 'v1'" @click="selectStartVersion('v1')">Wersja 1</button><button :aria-pressed="startVersion === 'v2'" @click="selectStartVersion('v2')">Wersja 2 <Sparkles :size="13" /></button></div></div>
+    <StartOrbit v-if="startVersion === 'v2'" :api="api" :busy="busy" :summary="summary" :greeting="dailyGreeting" @navigate="emit('navigate', $event)" @analysis="emit('mail-analysis')" @command="openCommand" @dictate="openCommand(); dictate()" />
+    <template v-else>
     <div class="start-hero compact-hero">
       <div class="ai-controls">
         <button class="ai-avatar edzio-avatar" :disabled="busy" aria-label="Porozmawiaj z Edziem, asystentem AI" @click="openCommand"><svg viewBox="0 0 64 64" fill="none" aria-hidden="true"><path d="M32 13V7" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="32" cy="6" r="3" fill="currentColor"/><rect x="9" y="15" width="46" height="39" rx="16" fill="var(--surface)" stroke="currentColor" stroke-width="2.5"/><path d="M9 29H5V39H9M55 29H59V39H55" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><g class="edzio-face-default"><path d="M20 29Q24 25 28 29M36 29Q40 25 44 29" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M24 39Q32 48 40 39" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></g><ellipse cx="18" cy="37" rx="4" ry="2.5" fill="currentColor" opacity=".15"/><ellipse cx="46" cy="37" rx="4" ry="2.5" fill="currentColor" opacity=".15"/></svg><span>Edzio</span></button>
@@ -167,6 +176,7 @@ onBeforeUnmount(() => { if (recognition) { recognition.onresult = null; recognit
       </div>
       <div class="ai-speech"><p class="edzio-remark">{{ dailyGreeting.title }}</p><p>{{ dailyGreeting.description }}</p><p class="edzio-instruction"><Mic :size="14" aria-hidden="true" /> Wciśnij mikrofon i powiedz, co mogę dla Ciebie zrobić.</p></div>
     </div>
+    <StartMailCard :api="api" :busy="busy" @open="emit('navigate', 'mail')" />
     <div class="shortcuts-heading"><h2>Wszystko pod ręką</h2></div>
     <div class="start-cards quick-cards">
       <button class="panel start-card calendar-summary" :disabled="busy" @click="emit('navigate', 'calendar')"><div class="summary-top"><span class="summary-icon"><CalendarDays :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Terminarz</h2><p>Twoje zadania w kalendarzu.</p><span class="summary-link">Otwórz kalendarz <ArrowRight :size="14" /></span></button>
@@ -176,6 +186,7 @@ onBeforeUnmount(() => { if (recognition) { recognition.onresult = null; recognit
       <button class="panel start-card drive-summary" :disabled="busy" @click="emit('navigate', 'notes')"><div class="summary-top"><span class="summary-icon"><StickyNote :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Notatki</h2><p>Zapisuj pomysły i ustalenia.</p><span class="summary-link">Otwórz notatki <ArrowRight :size="14" /></span></button>
       <button class="panel start-card drive-summary" :disabled="busy" @click="emit('navigate', 'documents')"><div class="summary-top"><span class="summary-icon"><FileText :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Dokumenty</h2><p>Pliki i podkatalogi w katalogu Dokumenty.</p><span class="summary-link">Otwórz dokumenty <ArrowRight :size="14" /></span></button>
     </div>
+    </template>
     <dialog ref="commandDialog" class="panel start-ai-dialog modern-ai-dialog" aria-labelledby="start-ai-title" @close="stopDictation" @cancel="assistantBusy && $event.preventDefault()" @click="closeOnBackdrop">
       <header class="start-ai-heading"><span class="dialog-avatar" aria-hidden="true"><Bot :size="27" /></span><div><span class="hero-label">Edzio do usług</span><h2 id="start-ai-title">Co dziś ogarniamy?</h2><p>Spotkanie, wiadomość, dokument, notatka czy ankieta? Powiedz mi jednym zdaniem.</p></div><button type="button" class="icon-button" :disabled="assistantBusy" aria-label="Zamknij rozmowę z Edziem" @click="commandDialog.close()"><X :size="20" /></button></header>
       <div class="start-ai-body">
@@ -204,6 +215,7 @@ onBeforeUnmount(() => { if (recognition) { recognition.onresult = null; recognit
 </template>
 <style scoped>
 .start-page { padding-top:24px; }
+.start-version-bar { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:20px; }.start-version-bar > span { font-size:13px; font-weight:600; }.start-version-bar small { display:block; color:var(--secondary); font-size:10px; font-weight:400; margin-top:5px; }.start-version-bar > div { display:flex; gap:3px; padding:4px; border:1px solid var(--border); border-radius:12px; background:var(--surface); }.start-version-bar button { padding:8px 11px; font-size:11px; border:0; background:transparent; color:var(--secondary); }.start-version-bar button[aria-pressed="true"] { background:var(--accent-soft); color:var(--accent); font-weight:600; }@media(max-width:480px) { .start-version-bar { align-items:flex-start; }.start-version-bar button { padding:8px; font-size:10px; } }
 .start-hero { position:relative; isolation:isolate; overflow:hidden; display:grid; grid-template-columns:minmax(0,1.6fr) minmax(220px,1fr); gap:8px 32px; border:1px solid var(--hero-border); background:var(--hero-bg); border-radius:28px; padding:24px 36px 36px; margin-bottom:32px; }
 .start-hero::before { content:''; position:absolute; z-index:-1; width:420px; height:420px; right:-110px; bottom:-170px; background:radial-gradient(circle,var(--accent-soft),transparent 70%); border-radius:50%; }
 .hero-toolbar { grid-column:1/-1; display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:10px; }

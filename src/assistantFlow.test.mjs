@@ -11,6 +11,7 @@ import { renderToString } from '@vue/server-renderer'
 const source = await readFile(new URL('./StartPanel.vue', import.meta.url), 'utf8')
 const { descriptor } = parse(source)
 const compiled = compileScript(descriptor, { id: 'assistant-test' }).content
+  .replace(/^import (\w+) from ['"][^'"]+\.vue['"]$/gm, 'const $1 = {}')
   .replace(/from (['"])([^'"]+)\1/g, (_, quote, specifier) => 'from ' + JSON.stringify(import.meta.resolve(specifier)))
 const testDirectory = await mkdtemp(join(tmpdir(), 'edzio-test-'))
 const compiledUrl = pathToFileURL(join(testDirectory, 'StartPanel.mjs'))

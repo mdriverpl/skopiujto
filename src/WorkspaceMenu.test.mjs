@@ -8,17 +8,17 @@ import { defaultMenuOrder, normalizeMenuOrder, moveMenuItem } from './menuOrder.
 
 const compiled = compileScript(parse(readFileSync(new URL('./WorkspaceMenu.vue', import.meta.url), 'utf8')).descriptor,
   { id: 'menu-test' }).content.replace(/^import .*$/gm, '').replace('export default', 'globalThis.component =')
-function menu(storage = new Map(), user = { id: 'me', role: 'user' }, api) {
+function menu(storage = new Map(), user = { id: 'me', role: 'user' }, api, options = {}) {
   const events = [], captures = new Set(), calls = []
   const context = { computed, ref, watch, onBeforeUnmount() {}, defaultMenuOrder, normalizeMenuOrder, moveMenuItem,
     localStorage: { getItem: key => storage.get(key) || null, removeItem: key => storage.delete(key) } }
-  for (const icon of ['House', 'Mail', 'ClipboardList', 'CalendarDays', 'StickyNote', 'Files', 'ClipboardCheck', 'HardDrive', 'FileText', 'BookOpen', 'Users', 'X']) context[icon] = {}
+  for (const icon of ['House', 'Mail', 'Sparkles', 'Inbox', 'Send', 'ShieldAlert', 'Trash2', 'Archive', 'ChevronDown', 'ClipboardList', 'CalendarDays', 'StickyNote', 'Files', 'ClipboardCheck', 'HardDrive', 'FileText', 'BookOpen', 'Users', 'X']) context[icon] = {}
   runInNewContext(compiled, context)
   const save = async (path, method, body) => {
     calls.push({ path, method, body })
     return api ? await api(path, method, body) : { menu_order: body.menu_order }
   }
-  const state = context.component.setup({ user, api: save, view: 'notes', open: true, tasksWaiting: 3, activeSurveys: 2 },
+  const state = context.component.setup({ user, api: save, view: 'notes', open: true, tasksWaiting: 3, activeSurveys: 2, ...options },
     { expose() {}, emit: (...args) => events.push(args) })
   state.menu.value = {
     getBoundingClientRect: () => ({ left: 0, right: 230, top: 0, bottom: 500 }),
@@ -130,4 +130,26 @@ test('failed save keeps the chosen order for retry and does not report success',
   await state.saveOrder()
   assert.equal(state.saveError.value, '')
   assert.equal(events[0][0], 'order-saved')
+})
+
+test('mail starts with AI analysis followed by ordered folders and closes mobile menu on selection', () => {
+  const { state, events } = menu()
+  assert.equal(state.definitions.mail.label, 'Poczta')
+  assert.deepEqual(Array.from(state.mailFolders, item => item.label), ['Analiza AI', 'Wiadomości odebrane', 'Wysłane', 'Robocze', 'Spam', 'Śmieci', 'Archiwum'])
+  state.select('mail', { ctrlKey: false })
+  assert.equal(state.mailExpanded.value, true)
+  assert.deepEqual(events, [['navigate', 'mail']])
+  state.selectMailFolder('analysis', { ctrlKey: false })
+  assert.deepEqual(events.slice(1), [['mail-folder', 'analysis'], ['close']])
+  state.select('mail', { ctrlKey: false })
+  assert.equal(state.mailExpanded.value, false)
+})
+
+test('mail starts expanded in its section and Ctrl actions do not toggle or navigate folders', () => {
+  const { state, events } = menu(new Map(), { id: 'me', role: 'user' }, undefined, { view: 'mail', mailFolder: 'sent' })
+  assert.equal(state.mailExpanded.value, true)
+  state.select('mail', { ctrlKey: true })
+  state.selectMailFolder('spam', { ctrlKey: true })
+  assert.equal(state.mailExpanded.value, true)
+  assert.deepEqual(events, [])
 })

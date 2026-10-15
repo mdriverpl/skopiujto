@@ -43,9 +43,8 @@ Aplikacja: http://127.0.0.1:5173. Konfiguracja S3: [backend/S3.md](backend/S3.md
 
 ## Pomoc i dokumentacja w aplikacji
 
-Pozycja **Pomoc** w menu otwiera wyszukiwane instrukcje modułów. Każdy moduł ma
-rozwijany opis z krótką instrukcją i przyciskiem **Pełna instrukcja**. Ikona książki
-w nagłówku również otwiera pomoc dotyczącą bieżącego modułu.
+Pozycja **Pomoc** w menu otwiera wyszukiwane instrukcje modułów. Ikona książki
+w nagłówku otwiera pomoc dotyczącą bieżącego modułu.
 Pomoc obejmuje codzienną pracę, edytor, historię, wysyłanie plików i akceptacje.
 Administrator ma dodatkowo instrukcje uprawnień oraz konfiguracji klucza poczty.
 Temat eDoręczenia opisuje rejestr, różnice między kluczem Fernet, certyfikatem X.509
@@ -205,6 +204,8 @@ wyłączenia linku.
 
 Testy: `& ./.runtime/python/python.exe -m pytest backend -q`.
 Build frontendu: `npm run build`.
+
+W „Dokumentach” i „Moim dysku” kliknięcie nazwy pliku PDF lub ikony **Podgląd PDF** otwiera duże okno z dokumentem i przyciskiem pobierania. Podgląd korzysta z przeglądarkowej obsługi PDF, bieżących uprawnień użytkownika i prywatnego endpointu `/api/documents/{id}/preview`. Odczytuje pliki zarówno z bazy, jak i magazynu S3. Edycja opisu pozostaje pod ikoną ołówka. Zamknięcie okna przerywa pobieranie i zwalnia lokalny adres pliku.
 
 Przycisk „Obraz i metadane” przy pliku otwiera podgląd i tagi EXIF, jeśli plik
 je zawiera. Autor z uprawnieniem do edycji może kadrować obraz myszą lub podać
@@ -573,6 +574,10 @@ dist/
 
 ## Edzio — polecenia ze strony Start
 
+**Start — Wersja 2** przedstawia Edzia na środku, a wokół niego panele Poczta, Zadania, Terminarz, Mój dysk, Dokumenty, Ankiety, Notatki i Analiza AI. Znaczniki pokazują nieprzeczytaną pocztę, zadania do wykonania, zadania z terminem i oczekujące ankiety. Kliknięcie Edzia otwiera rozmowę, a mikrofon uruchamia dyktowanie. Na telefonie Edzio jest nad siatką paneli. Przełącznik **Wersja 1 / Wersja 2** zachowuje dotychczasowy widok i zapamiętuje wybór osobno dla konta w bieżącej przeglądarce; domyślnie otwiera się wersja 2.
+
+Na stronie Start panel **Poczta** pokazuje grafikę koperty, liczbę nowych (nieprzeczytanych w Odebranych), wszystkie wiadomości w Odebranych i liczbę nowych oznaczonych jako Pilne. Foldery Spam, Śmieci, Archiwum i Wysłane oraz kategoria Spam nie zwiększają licznika. Kliknięcie panelu otwiera Odebrane. Liczniki są odczytywane z prywatnego `GET /api/client-mail/summary`, bez pobierania treści ani synchronizacji IMAP; odświeżają się przy wejściu, po powrocie do karty i co minutę, gdy jest widoczna. Dostępna jest też ikona ręcznego odświeżania.
+
 Ikona Edzia otwiera rozmowę, a mikrofon uruchamia dyktowanie po polsku. Po rozpoznaniu
 mowy można poprawić tekst i kliknąć „Przygotuj”. AI wybiera rodzaj polecenia:
 
@@ -595,17 +600,32 @@ urządzenia, a kalendarz pokazuje godziny Europe/Warsaw.
 Integracja korzysta z konfiguracji OPENAI_API_KEY i OPENAI_MODEL oraz
 [Structured Outputs w Responses API](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses).
 Testy backend/test_assistant.py zastępują transport AI i nie wykonują płatnych zapytań.
-### Poczta Klienta
+### Poczta
 
-Menu **Poczta Klienta** otwiera listę wiadomości, podgląd treści i panel analizy AI. Wiadomości, szkice, etykiety, gwiazdki i foldery są przechowywane w PostgreSQL osobno dla każdego użytkownika. Dostęp do załączników wymaga sesji właściciela wiadomości.
+Przycisk **Usuń powiązanie** w oknie otwieranym po kliknięciu nazwy firmy usuwa wyłącznie przypisanie tego adresu e-mail. Firma pozostaje w słowniku, inne adresy zachowują przypisania, a reguła domeny nie jest usuwana. Dla odłączonego adresu zapisywany jest wyjątek od dziedziczenia firmy z domeny. Ponowne jawne przypisanie tego adresu usuwa jego wyjątek. Operacja nie przenosi wiadomości do Spamu; nadawca przestaje korzystać z zaufania wynikającego z przypisania firmy.
 
-- **Importuj .eml**: wczytanie wiadomości z załącznikami (maks. 10 MB). HTML jest zamieniany na tekst; zewnętrzne obrazy nie są ładowane. Synchronizacja IMAP nie jest jeszcze obsługiwana.
+Filtr sprawdza też treść i łączy sygnały masowej wysyłki z rabatami procentowymi, kuponami, ofertami medycznymi, zapisami na szkolenia, reklamami internetu i zachętami sprzedażowymi. Prośba o zgodę trafia do Spamu dopiero razem z propozycją usług i zachętą do kontaktu. Masowe podsumowania aktywności społecznościowej są filtrowane osobno od zwykłych wiadomości. Sama nazwa nadawcy, link, stopka wypisania lub temat dotyczący podatków nie wystarczają. Zaufani nadawcy i ręczne wyjątki nadal mają zastosowanie.
+
+Lokalny filtr reklam działa przy imporcie EML, odbiorze IMAP i otwarciu poczty; przycisk **Sprawdź reklamy i spam** pozwala powtórzyć sprawdzenie. Łączy reklamowy temat z sygnałem masowej wysyłki w treści i zapisuje powód w kategorii Spam. Wykrywa też reklamy produktów bez stopki wypisania, jeśli łączą obietnicę korzyści w temacie (np. „Spokojny sen każdej nocy”), opis produktu i zachętę „wypróbuj”, „kup” lub „zamów”. Rozpoznaje polskie znaki zapisane jako encje HTML. Pomija zaufane adresy i dokładne domeny przypisane do Firm oraz ręcznie wybrane kategorie. Nie korzysta z OpenAI. Odpowiedzi, faktury i potwierdzenia zamówień nie są wykrywane przez regułę reklamową. Przywrócenie automatycznie odfiltrowanej wiadomości do Odebranych usuwa automatyczną kategorię Spam i zapamiętuje ręczny wyjątek dla tej wiadomości. Zaufany adres lub domena ma pierwszeństwo przed dawną blokadą i filtrem; API odrzuca oznaczenie Spam dla zaufanego nadawcy. Filtr dotyczy kopii w portalu, bez przenoszenia wiadomości na serwerze IMAP.
+
+Rozwijane menu **Poczta** zaczyna się od pozycji **Analiza AI**, otwierającej lokalny raport dnia. Dalej udostępnia foldery **Wiadomości odebrane**, **Wysłane**, **Spam**, **Śmieci** i **Archiwum**. Kliknięcie pozycji otwiera odpowiedni widok i podświetla pozycję menu. Widok poczty zawiera podgląd treści i panel analizy AI. Wiadomości, szkice, etykiety, gwiazdki i foldery są przechowywane w PostgreSQL osobno dla każdego użytkownika. Dostęp do załączników wymaga sesji właściciela wiadomości.
+
+- **Importuj .eml**: wczytanie wiadomości z załącznikami (maks. 10 MB). HTML jest zamieniany na tekst; zewnętrzne obrazy nie są ładowane.
+- **Przypisz firmę** przy adresie nadawcy: przypisanie jednego adresu lub dokładnej domeny do wpisu w prywatnym słowniku **Firmy**. Brakująca firma i słownik powstają przy zapisie. Przypisanie adresu ma pierwszeństwo przed domeną. Firma jest odczytywana z aktualnego wpisu słownika; powiązane wiadomości mają status **Bezpieczna**. To oznaczenie zaufania użytkownika do nadawcy.
+- **SPAM** obok adresu nieprzypisanego do firmy oraz **Zaznacz jako spam** w prawym panelu: przenoszą korespondencję nadawcy z Odebranych i Archiwum do Spamu oraz stosują regułę przy kolejnych importach i synchronizacjach IMAP. Widok pozostaje w bieżącym folderze, a przeniesienie potwierdza animacja. Zaufanego nadawcy nie można zablokować ani oznaczyć kategorią lub folderem Spam; przycisk SPAM jest ukryty, a odpowiedni folder nieaktywny. Można usunąć adres ze spamu; ponowne przypisanie firmy usuwa blokadę wybranego adresu lub domeny i przywraca pasujące wiadomości ze Spamu. Reguły są prywatne dla konta.
+- **Podgląd wiadomości**: nadawca, adres i firma na górze, pod adresem pole **Etykieta** z wyborem **Pilne**, **Faktura**, **Oferta** lub bez etykiety. Wybór jest zapisywany i odtwarzany po otwarciu wiadomości. Starsze oznaczenia pozostają widoczne do zmiany. Dalej znajdują się temat i treść. Przyciski odpowiedzi, przekazania i spamu są nad wiadomością, obok śmieci i archiwum. Prawy panel pokazuje załączniki z ikonami pobierania i zapisu na Dysku. Grupy Szukaj, Ustawienia i Wiadomość usunięto. Wyszukiwanie pozostaje w górnym pasku. Odświeżanie jest przy nazwie folderu nad listą; ikona ustawień konta znajduje się obok nagłówka Poczta. Ikony mają opisy po najechaniu myszą.
+- **Kategorie wiadomości** są zapisywane osobno od etykiety i folderu; oznaczenie jest widoczne na liście i przy temacie. Etykieta Faktura uwzględniana jest również w liczniku faktur raportu dnia.
+- **Zapisz na Dysku** przy załączniku lub **Zapisz wszystkie na Dysku**: wybierz pliki i katalog w „Moim dysku” albo utwórz nowy podkatalog. Zapis korzysta z istniejącego magazynu plików portalu i wymaga praw dodawania w katalogu. Załączniki są kopiowane przez standardowe API plików; oryginały pozostają w poczcie. Przy częściowym niepowodzeniu okno wskazuje zapisane pliki, a ponowienie obejmuje pozostałe. Przycisk pobierania przy nazwie pliku zapisuje załącznik na komputerze.
+- **Analiza dnia**: pozycja **Poczta > Analiza AI** w menu otwiera całkowicie lokalny raport wybranego dnia według strefy Europe/Warsaw. Obejmuje wszystkie foldery poza Roboczymi, niezależnie od filtrów listy. Pokazuje odebrane, wysłane, oznaczony spam, nieprzeczytane, wiadomości do odpowiedzi, kategorie oraz korespondencję od przypisanych firm. Podsumowanie i wskazówki wynikają z liczników; raport nie wysyła danych do OpenAI. Spam jest liczony raz, także przy jednoczesnym oznaczeniu kategorią, folderem i blokadą adresu. „Od firm / klientów” oznacza niespamową korespondencję od adresów lub domen powiązanych ze słownikiem Firmy, w tym od dostawców. API: `GET /api/client-mail/day-report?day=YYYY-MM-DD` lub `POST /api/client-mail/day-report` z `{"day":"YYYY-MM-DD"}`.
+
+Raport wyróżnia **Pilne**, **Do odpowiedzi**, **Do zapłaty** i **Informacje**. Panel „Najpierw najważniejsze” prowadzi do odpowiednich wiadomości, a na dole strony jest lista z wyborem grupy i wyszukiwaniem. Każda wiadomość pokazuje temat, nadawcę, godzinę, firmę oraz folder. Kliknięcie otwiera aktualną wiadomość, również z Archiwum lub Śmieci. Spam nie trafia do list wymagających działania; faktura bez etykiety Do zapłaty pozostaje w kategorii Faktura.
+Pozycja **Analiza AI** otwiera osobną stronę raportu, poza układem skrzynki pocztowej. Strona zawiera karty najważniejszych liczb, wykres kategorii, histogram godzinowy, udział firm oraz panel pilnych spraw. Kliknięcie karty lub kategorii filtruje listę wiadomości na dole; dostępne są wyszukiwanie, wybór grupy i wczytywanie kolejnych pozycji. Wybrany dzień jest zachowany po otwarciu wiadomości i powrocie do raportu. Wykresy i podsumowanie nadal są obliczane lokalnie.
 - **Napisz / Odpowiedz / Przekaż**: edytowalna treść i zapis w folderze Robocze. Przekazanie kopiuje treść bez załączników. Wysyłanie załączników nie jest jeszcze obsługiwane.
 - **Ustawienia poczty** (ikona koła zębatego): adres e-mail, nazwa nadawcy i osobne dane SMTP oraz IMAP (serwer, port, SSL/TLS lub STARTTLS, login, hasło). Zapis dotyczy tylko bieżącego użytkownika. Puste hasło zachowuje zapisane hasło; zaznaczenie Usuń zapisane hasło usuwa je. Przycisk Zapisz i sprawdź testuje połączenie bez wysyłania lub pobierania wiadomości. Po zapisaniu konfiguracji IMAP przycisk Odśwież pocztę pobiera wiadomości z INBOX (do 100 na raz), bez duplikatów i bez oznaczania ich jako przeczytane na serwerze.
-- **Wyślij**: korzysta z zapisanej osobistej konfiguracji SMTP. Przed jej pierwszym zapisem dostępna jest konfiguracja SMTP serwera; wyłączenie osobistego SMTP blokuje wysyłkę z Poczty Klienta. Niepowodzenie zachowuje szkic. Folder Wysłane oznacza przyjęcie przez SMTP, nie potwierdzone doręczenie.
+- **Wyślij**: korzysta z zapisanej osobistej konfiguracji SMTP. Przed jej pierwszym zapisem dostępna jest konfiguracja SMTP serwera; wyłączenie osobistego SMTP blokuje wysyłkę z Poczty. Niepowodzenie zachowuje szkic. Folder Wysłane oznacza przyjęcie przez SMTP, nie potwierdzone doręczenie.
 - **Przeanalizuj wiadomość**: na żądanie przekazuje treść wiadomości do skonfigurowanego AI i zwraca podsumowanie, priorytet, zadania oraz propozycję odpowiedzi. Załączniki nie są analizowane. Użyj odpowiedzi otwiera edytor; wysyłka wymaga kliknięcia Wyślij.
 
-Po aktualizacji uruchom ponownie backend, aby utworzyć tabele client_mail i client_mail_attachments oraz udostępnić endpointy /api/client-mail. Frontend buduje się poleceniem npm run build.
+Po aktualizacji uruchom ponownie backend, aby utworzyć tabele poczty, w tym `client_mail_spam_addresses` i `client_mail_company_rules`, oraz udostępnić endpointy /api/client-mail. Frontend buduje się poleceniem npm run build. Reguły: `GET /api/client-mail/companies`, `POST /api/client-mail/{id}/company` (`scope`: `email` lub `domain`, `entry_id` albo `name`, `version` wiadomości), `POST/DELETE /api/client-mail/{id}/spam-address` (`version` wiadomości).
 
 Hasła kont pocztowych są szyfrowane biblioteką cryptography (Fernet), nie są zwracane przez API i nie trafiają do konfiguracji jawnej w bazie. Klucz jest pobierany wyłącznie ze zmiennej środowiskowej `EDOCUMENTS_MAIL_SETTINGS_KEY`. Lokalnie backend wczytuje `.env` przy starcie; Docker Compose przekazuje `.env` do kontenera. Brak lub niepoprawna wartość blokuje zapis i odczyt haseł z błędem 503. Aplikacja nie tworzy ani nie odczytuje pliku klucza.
 

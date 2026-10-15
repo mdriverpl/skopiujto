@@ -1,17 +1,28 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { House, Mail, ClipboardList, CalendarDays, StickyNote, Files, ClipboardCheck, HardDrive, FileText, BookOpen, Users, X } from 'lucide-vue-next'
+import { House, Mail, Sparkles, Inbox, Send, ShieldAlert, Trash2, Archive, ChevronDown, ClipboardList, CalendarDays, StickyNote, Files, ClipboardCheck, HardDrive, FileText, BookOpen, Users, X } from 'lucide-vue-next'
 import { defaultMenuOrder, normalizeMenuOrder, moveMenuItem } from './menuOrder.js'
 
-const props = defineProps({ user: Object, api: Function, view: String, open: Boolean, tasksWaiting: Number, activeSurveys: Number })
-const emit = defineEmits(['navigate', 'close', 'order-saved'])
+const props = defineProps({ user: Object, api: Function, view: String, open: Boolean, tasksWaiting: Number, activeSurveys: Number, mailFolder: String })
+const emit = defineEmits(['navigate', 'mail-folder', 'close', 'order-saved'])
+const mailExpanded = ref(false)
+const mailFolders = [
+  { id: 'analysis', label: 'Analiza AI', icon: Sparkles },
+  { id: 'inbox', label: 'Wiadomości odebrane', icon: Inbox },
+  { id: 'sent', label: 'Wysłane', icon: Send },
+  { id: 'drafts', label: 'Robocze', icon: FileText },
+  { id: 'spam', label: 'Spam', icon: ShieldAlert },
+  { id: 'trash', label: 'Śmieci', icon: Trash2 },
+  { id: 'archive', label: 'Archiwum', icon: Archive }
+]
+watch(() => props.view, view => { if (view === 'mail') mailExpanded.value = true }, { immediate: true })
 const menu = ref(null), order = ref([...defaultMenuOrder]), dragged = ref(null), announcement = ref('')
 let gesture = null, suppressClick = false
 const saving = ref(false), saveError = ref('')
 let disposed = false
 const definitions = {
   start: { label: 'Start', icon: House }, ai: { label: 'Wiadomości', icon: Mail },
-  mail: { label: 'Poczta Klienta', icon: Mail },
+  mail: { label: 'Poczta', icon: Mail },
   edelivery: { label: 'eDor\u0119czenia', icon: Mail },
   tasks: { label: 'Zadania', icon: ClipboardList }, calendar: { label: 'Terminarz', icon: CalendarDays },
   notes: { label: 'Notatki', icon: StickyNote }, documents: { label: 'Dokumenty', icon: Files },
@@ -55,7 +66,18 @@ watch(() => props.user?.id, () => {
 
 function select(id, event) {
   if (suppressClick || event.ctrlKey) { suppressClick = false; return }
+  if (id === 'mail') {
+    mailExpanded.value = !mailExpanded.value
+    if (mailExpanded.value && props.view !== 'mail') emit('navigate', 'mail')
+    return
+  }
   emit('navigate', id)
+  emit('close')
+}
+function selectMailFolder(id, event) {
+  if (suppressClick || event.ctrlKey) { suppressClick = false; return }
+  mailExpanded.value = true
+  emit('mail-folder', id)
   emit('close')
 }
 function pointerDown(id, event) {
@@ -121,9 +143,14 @@ onBeforeUnmount(() => { disposed = true; cancelDrag() })
     <p class="menu-reorder-hint">Ctrl + przeciągnięcie zmienia kolejność</p>
     <p v-if="saving" class="menu-reorder-hint" role="status">Zapisywanie kolejności…</p>
     <div v-if="saveError" class="menu-save-error" role="alert"><p>{{ saveError }}</p><button @click="saveOrder">Spróbuj ponownie</button></div>
-    <button v-for="item in items" :key="item.id" :data-menu-id="item.id" :class="{ active: active(item.id), 'menu-dragged': dragged === item.id }" :aria-current="active(item.id) ? 'page' : undefined" :title="`${item.label} — Ctrl + przeciągnięcie lub Ctrl + strzałki zmienia kolejność`" @pointerdown="pointerDown(item.id, $event)" @click="select(item.id, $event)" @keydown="keyMove(item.id, $event)">
-      <component :is="item.icon" :size="18" /> {{ item.label }}<span v-if="item.id === 'tasks' && tasksWaiting">({{ tasksWaiting }})</span><span v-if="item.id === 'surveys'">({{ activeSurveys }})</span>
-    </button>
+    <template v-for="item in items" :key="item.id">
+      <button :data-menu-id="item.id" :class="{ active: active(item.id), 'menu-dragged': dragged === item.id }" :aria-current="active(item.id) && item.id !== 'mail' ? 'page' : undefined" :aria-expanded="item.id === 'mail' ? mailExpanded : undefined" :aria-controls="item.id === 'mail' ? 'mail-folder-menu' : undefined" :title="item.id === 'mail' ? (mailExpanded ? 'Zwiń foldery poczty' : 'Rozwiń foldery poczty') : `${item.label} — Ctrl + przeciągnięcie lub Ctrl + strzałki zmienia kolejność`" @pointerdown="pointerDown(item.id, $event)" @click="select(item.id, $event)" @keydown="keyMove(item.id, $event)">
+        <component :is="item.icon" :size="18" /> {{ item.label }}<span v-if="item.id === 'tasks' && tasksWaiting">({{ tasksWaiting }})</span><span v-if="item.id === 'surveys'">({{ activeSurveys }})</span><ChevronDown v-if="item.id === 'mail'" class="mail-menu-chevron" :class="{ expanded: mailExpanded }" :size="16" />
+      </button>
+      <div v-if="item.id === 'mail'" v-show="mailExpanded" id="mail-folder-menu" class="mail-folder-menu" role="group" aria-label="Foldery poczty">
+        <button v-for="item in mailFolders" :key="item.id" :class="{ active: view === 'mail' && mailFolder === item.id }" :aria-current="view === 'mail' && mailFolder === item.id ? 'page' : undefined" :title="`Otwórz folder: ${item.label}`" @click="selectMailFolder(item.id, $event)"><component :is="item.icon" :size="16" />{{ item.label }}</button>
+      </div>
+    </template>
     <span class="menu-announcement" role="status" aria-live="polite">{{ announcement }}</span>
   </nav>
 </template>
@@ -136,4 +163,8 @@ onBeforeUnmount(() => { disposed = true; cancelDrag() })
 .menu-announcement { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
 .menu-save-error { padding:0 14px; font-size:11px; color:var(--theme-danger, #a95353); }
 .menu-save-error button { font-size:11px; padding:6px 9px; }
+.mail-menu-chevron { margin-left:auto; transition:transform .15s; }.mail-menu-chevron.expanded { transform:rotate(180deg); }
+.mail-folder-menu { display:grid; gap:3px; margin:-3px 0 4px 21px; padding-left:9px; border-left:1px solid var(--border); }
+.mail-folder-menu button { width:100%; justify-content:flex-start; text-align:left; gap:9px; padding:10px 8px; border:0; background:transparent; color:var(--secondary); font-size:11px; }
+.mail-folder-menu button svg { flex-shrink:0; }.mail-folder-menu button:hover { color:var(--accent); background:var(--surface-soft); }.mail-folder-menu button.active { color:var(--accent); background:var(--accent-soft); font-weight:600; }
 </style>

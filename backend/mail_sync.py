@@ -5,6 +5,7 @@ import re
 import secrets
 import ssl
 from fastapi import HTTPException
+from backend import mail_rules
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS client_mail_imap(
@@ -75,10 +76,12 @@ def receive(db, current, config, parse_message, now):
                                (current['id'], account, uid_validity, uid.decode())).fetchone():
                     continue
                 identifier = secrets.token_hex(16)
+                incoming_folder = mail_rules.apply_incoming(con, current['id'], parsed['sender_email'], parsed['subject'], parsed['content'])
                 con.execute('''INSERT INTO client_mail(id,user_id,sender_name,sender_email,recipient,subject,content,folder,unread,created_at)
-                    VALUES(?,?,?,?,?,?,?,'inbox',?,?)''', (identifier, current['id'], parsed['sender_name'],
-                    parsed['sender_email'], parsed['recipient'], parsed['subject'], parsed['content'],
+                    VALUES(?,?,?,?,?,?,?,?,?,?)''', (identifier, current['id'], parsed['sender_name'],
+                    parsed['sender_email'], parsed['recipient'], parsed['subject'], parsed['content'], incoming_folder,
                     int(b'\\Seen' not in header), parsed['timestamp'] or now()))
+                mail_rules.mark_incoming(con, identifier, current['id'])
                 for name, payload in parsed['attachments']:
                     con.execute('INSERT INTO client_mail_attachments(id,mail_id,name,size,data) VALUES(?,?,?,?,?)',
                                 (secrets.token_hex(16), identifier, name, len(payload), payload))
