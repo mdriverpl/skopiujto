@@ -6,11 +6,12 @@ from email.parser import BytesParser
 from email.utils import parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Literal
+from datetime import datetime, timedelta, timezone
 
 from email_validator import validate_email, EmailNotValidError
-from fastapi import Depends, File, HTTPException, Response, UploadFile
+from fastapi import Depends, File, HTTPException, Response, UploadFile, Query
 from pydantic import BaseModel, Field, field_validator
-from backend import ai, mailer, mail_settings, mail_sync, mail_rules
+from backend import ai, mailer, mail_settings, mail_sync, mail_rules, mail_attachments, mail_daily
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS client_mail(
@@ -20,9 +21,11 @@ CREATE TABLE IF NOT EXISTS client_mail(
  unread INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0,
  label TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1);
 CREATE INDEX IF NOT EXISTS client_mail_owner ON client_mail(user_id);
+CREATE INDEX IF NOT EXISTS client_mail_owner_date ON client_mail(user_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS client_mail_attachments(
  id TEXT PRIMARY KEY, mail_id TEXT NOT NULL REFERENCES client_mail(id) ON DELETE CASCADE,
- name TEXT NOT NULL, size INTEGER NOT NULL, data BYTEA NOT NULL);
+ name TEXT NOT NULL, size INTEGER NOT NULL, data BYTEA,
+ disk_key TEXT, remote_section TEXT);
 '''
 
 SCHEMA += mail_sync.SCHEMA
@@ -33,8 +36,13 @@ Category = Literal['', 'spam', 'advertisement', 'invoice', 'payment', 'order', '
 
 def initialize(con):
     con.executescript(SCHEMA)
+    columns = con.columns('client_mail_attachments')
+    for column in ('disk_key', 'remote_section'):
+        if column not in columns:
+            con.execute(f'ALTER TABLE client_mail_attachments ADD COLUMN {column} TEXT')
+    con.execute('ALTER TABLE client_mail_attachments ALTER COLUMN data DROP NOT NULL')
     existing = con.columns('client_mail')
-    for column in ('category', 'category_source', 'category_reason'):
+    for column in ('category', 'category_source', 'category_reason', 'label_source'):
         if column not in existing:
             con.execute(f"ALTER TABLE client_mail ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
@@ -50,6 +58,10 @@ class Draft(BaseModel):
         if any(ord(char) < 32 or ord(char) == 127 for char in value):
             raise ValueError('Nagłówek zawiera niedozwolone znaki.')
         return value.strip()
+
+class SyncRequest(BaseModel):
+    hours: Literal[24, 48, 168, 720] = 24
+
 
 class MailPatch(BaseModel):
     version: int = Field(ge=1)
@@ -72,12 +84,18 @@ ANALYSIS_SCHEMA = {'type': 'object', 'additionalProperties': False, 'properties'
 
 class PlainHTML(HTMLParser):
     def __init__(self):
-        super().__init__(); self.parts = []; self.hidden = 0
+        super().__init__(); self.parts = []; self.hidden = 0; self.anchor_links = []
     def handle_starttag(self, tag, attrs):
         if tag in ('script', 'style'): self.hidden += 1
         if tag in ('p', 'br', 'div', 'li'): self.parts.append('\n')
+        if tag == 'a':
+            href = (dict(attrs).get('href') or '').strip()
+            self.anchor_links.append(href if not self.hidden and href.lower().startswith(('https://', 'http://')) else '')
     def handle_endtag(self, tag):
         if tag in ('script', 'style'): self.hidden = max(0, self.hidden - 1)
+        if tag == 'a' and self.anchor_links:
+            href = self.anchor_links.pop()
+            if href and not self.hidden: self.parts.append(' (' + href + ')')
     def handle_data(self, data):
         if not self.hidden: self.parts.append(data)
 
@@ -111,10 +129,12 @@ def parse_message(raw):
 
 
 def install(app, db, user, now):
-    def serialize(con, row, rules_context=None):
+    def serialize(con, row, rules_context=None, attachments=None):
         result = dict(row)
         result.update(mail_rules.classify(row['sender_email'], rules_context if rules_context is not None else mail_rules.context(con, row['user_id'])))
-        result['attachments'] = [dict(a) for a in con.execute(
+        result['phishing_warning'] = mail_rules.phishing_reason(row['subject'], row['content']) if result['government'] else ''
+        result['attachments_blocked'] = row['folder'] == 'spam' or row['category'] == 'spam'
+        result['attachments'] = attachments if attachments is not None else [dict(a) for a in con.execute(
             'SELECT id,name,size FROM client_mail_attachments WHERE mail_id=? ORDER BY id', (row['id'],))]
         return result
 
@@ -127,11 +147,33 @@ def install(app, db, user, now):
         if row['version'] != version: raise HTTPException(409, 'Wiadomość została zmieniona. Odśwież pocztę.')
 
     @app.get('/api/client-mail')
-    def listing(current=Depends(user)):
+    def listing(hours: int | None = Query(default=None), include_id: str | None = Query(default=None, max_length=64), current=Depends(user)):
+        if hours is not None and hours not in mail_sync.ALLOWED_HOURS:
+            raise HTTPException(422, 'Wybierz zakres: 24 h, 48 h, 7 dni lub 30 dni.')
         with db() as con:
             rules_context = mail_rules.context(con, current['id'])
-            return [serialize(con, row, rules_context) for row in con.execute(
-                'SELECT * FROM client_mail WHERE user_id=? ORDER BY created_at DESC,id', (current['id'],))]
+            if hours is None:
+                rows = con.execute('SELECT * FROM client_mail WHERE user_id=? ORDER BY created_at DESC,id', (current['id'],)).fetchall()
+            else:
+                cutoff = mail_sync.utc_now() - timedelta(hours=hours)
+                candidates = con.execute('''SELECT * FROM client_mail WHERE user_id=? AND (created_at>=? OR id=?)
+                    ORDER BY created_at DESC,id''', (current['id'], (cutoff - timedelta(days=1)).date().isoformat(), include_id)).fetchall()
+                rows = []
+                for row in candidates:
+                    if row['id'] == include_id: rows.append(row); continue
+                    try:
+                        stamp = datetime.fromisoformat(row['created_at'].replace('Z', '+00:00'))
+                        if stamp.tzinfo is None: stamp = stamp.replace(tzinfo=timezone.utc)
+                        if stamp >= cutoff: rows.append(row)
+                    except (ValueError, TypeError, AttributeError): pass
+            parts = {row['id']: [] for row in rows}
+            identifiers = list(parts)
+            for offset in range(0, len(identifiers), 500):
+                batch = identifiers[offset:offset + 500]
+                query = 'SELECT mail_id,id,name,size FROM client_mail_attachments WHERE mail_id IN (' + ','.join('?' for _ in batch) + ') ORDER BY id'
+                for part in con.execute(query, tuple(batch)):
+                    parts[part['mail_id']].append({key: part[key] for key in ('id', 'name', 'size')})
+            return [serialize(con, row, rules_context, parts[row['id']]) for row in rows]
 
     @app.get('/api/client-mail/summary')
     def mailbox_summary(current=Depends(user)):
@@ -140,17 +182,36 @@ def install(app, db, user, now):
                 COUNT(*) FILTER (WHERE unread=1) AS unread,
                 COUNT(*) FILTER (WHERE unread=1 AND label='urgent') AS urgent
                 FROM client_mail WHERE user_id=? AND folder='inbox' AND category!='spam'""", (current['id'],)).fetchone()
-            return {key: int(row[key]) for key in ('total', 'unread', 'urgent')}
+            result = {key: int(row[key]) for key in ('total', 'unread', 'urgent')}
+            today = mail_sync.utc_now().astimezone(mail_daily.WARSAW).date()
+            result.update(today=0, today_unread=0, today_urgent=0,
+                          today_clients=0, today_government=0, today_other=0, today_invoices=0)
+            rules_context = mail_rules.context(con, current['id'])
+            for message in con.execute("""SELECT created_at,unread,label,category,sender_email FROM client_mail
+                WHERE user_id=? AND folder='inbox' AND category!='spam' AND created_at>=?""",
+                (current['id'], (today - timedelta(days=1)).isoformat())):
+                if mail_daily.parsed_day(message['created_at']) != today: continue
+                result['today'] += 1
+                result['today_unread'] += int(bool(message['unread']))
+                result['today_urgent'] += int(bool(message['unread']) and message['label'] == 'urgent')
+                sender = mail_rules.classify(message['sender_email'], rules_context)
+                kind = 'government' if sender['government'] else 'clients' if sender['company'] else 'other'
+                result['today_' + kind] += 1
+                result['today_invoices'] += int(message['label'] == 'invoice' or message['category'] == 'invoice')
+            return result
 
     @app.get('/api/client-mail/companies')
     def companies(current=Depends(user)):
         with db() as con: return mail_rules.companies(con, current['id'])
 
     @app.post('/api/client-mail/spam-scan')
-    def scan_spam(current=Depends(user)):
+    def scan_spam(hours: int | None = Query(default=None), current=Depends(user)):
+        if hours is not None and hours not in mail_sync.ALLOWED_HOURS:
+            raise HTTPException(422, 'Wybierz zakres: 24 h, 48 h, 7 dni lub 30 dni.')
         with db() as con:
             con.begin_write()
-            return {'moved': mail_rules.scan_inbox(con, current['id'])}
+            cutoff = mail_sync.utc_now() - timedelta(hours=hours) if hours is not None else None
+            return {'moved': mail_rules.scan_inbox(con, current['id'], cutoff)}
 
     @app.post('/api/client-mail/{identifier}/company')
     def assign_company(identifier: str, body: mail_rules.CompanyLink, current=Depends(user)):
@@ -174,8 +235,8 @@ def install(app, db, user, now):
         with db() as con:
             con.begin_write()
             row = owned(con, identifier, current); check_version(row, body.version)
-            if row['safe']:
-                raise HTTPException(422, 'Zaufanego adresu lub domeny nie można oznaczyć jako spam.')
+            if row['spam_protected']:
+                raise HTTPException(422, 'Zaufanego adresu ani adresu w domenie gov.pl nie można oznaczyć jako spam.')
             address = mail_rules.address(row['sender_email'])
             con.execute('INSERT INTO client_mail_spam_addresses(user_id,address) VALUES(?,?) ON CONFLICT DO NOTHING',
                         (current['id'], address))
@@ -201,9 +262,9 @@ def install(app, db, user, now):
             return owned(con, identifier, current)
 
     @app.post('/api/client-mail/sync')
-    def sync(current=Depends(user)):
+    def sync(body: SyncRequest | None = None, current=Depends(user)):
         with db() as con: config = mail_settings.imap_config(con, current)
-        return mail_sync.receive(db, current, config, parse_message, now)
+        return mail_sync.receive(db, current, config, parse_message, now, body.hours if body else 24)
 
     @app.post('/api/client-mail/import', status_code=201)
     async def import_mail(file: UploadFile = File(...), current=Depends(user)):
@@ -224,8 +285,9 @@ def install(app, db, user, now):
                 parsed['sender_email'], parsed['recipient'], parsed['subject'], parsed['content'], incoming_folder, parsed['timestamp'] or now()))
             mail_rules.mark_incoming(con, identifier, current['id'])
             for name, data in parsed['attachments']:
-                con.execute('INSERT INTO client_mail_attachments(id,mail_id,name,size,data) VALUES(?,?,?,?,?)',
-                            (secrets.token_hex(16), identifier, name, len(data), data))
+                key = mail_attachments.put(data, current['id']) if incoming_folder != 'spam' else None
+                con.execute('INSERT INTO client_mail_attachments(id,mail_id,name,size,disk_key) VALUES(?,?,?,?,?)',
+                            (secrets.token_hex(16), identifier, name, len(data), key))
             return owned(con, identifier, current)
 
     @app.post('/api/client-mail/drafts', status_code=201)
@@ -253,8 +315,10 @@ def install(app, db, user, now):
             con.begin_write(); row = owned(con, identifier, current); check_version(row, body.version)
             changes = body.model_dump(exclude_none=True, exclude={'version'})
             if not changes: return row
-            if row['safe'] and (changes.get('folder') == 'spam' or changes.get('category') == 'spam'):
-                raise HTTPException(422, 'Zaufanego adresu lub domeny nie można oznaczyć jako spam.')
+            if 'label' in changes:
+                changes['label_source'] = 'manual'
+            if row['spam_protected'] and (changes.get('folder') == 'spam' or changes.get('category') == 'spam'):
+                raise HTTPException(422, 'Zaufanego adresu ani adresu w domenie gov.pl nie można oznaczyć jako spam.')
             if row['folder'] == 'spam' and changes.get('folder') == 'inbox' and row['category_source'] == 'local':
                 changes.update(category='', category_source='manual', category_reason='')
             if 'category' in changes:
@@ -282,14 +346,44 @@ def install(app, db, user, now):
     @app.get('/api/client-mail/{identifier}/attachments/{attachment_id}')
     def download(identifier: str, attachment_id: str, current=Depends(user)):
         with db() as con:
-            owned(con, identifier, current)
-            part = con.execute('SELECT name,data FROM client_mail_attachments WHERE id=? AND mail_id=?',
+            row = owned(con, identifier, current)
+            if row['attachments_blocked']:
+                raise HTTPException(422, 'Załączniki spamu nie są pobierane ani zapisywane. Najpierw przywróć wiadomość do Odebranych.')
+            part = con.execute('SELECT * FROM client_mail_attachments WHERE id=? AND mail_id=?',
                                (attachment_id, identifier)).fetchone()
             if not part: raise HTTPException(404, 'Nie znaleziono załącznika.')
+            source = con.execute('SELECT * FROM client_mail_imap WHERE mail_id=? AND user_id=?',
+                                 (identifier, current['id'])).fetchone()
+            config = mail_settings.imap_config(con, current) if not part['disk_key'] and part['data'] is None and source else None
+        if part['disk_key']:
+            try: data = mail_attachments.disk_path(part['disk_key']).read_bytes()
+            except OSError: raise HTTPException(503, 'Zapisany załącznik jest niedostępny. Sprawdź dysk serwera.') from None
+        elif part['data'] is not None:
+            data = bytes(part['data'])
+        elif source and part['remote_section']:
+            data = mail_attachments.fetch(config, source, part['remote_section'])
+        else:
+            raise HTTPException(410, 'Ten załącznik nie został zachowany. Możesz ponownie zaimportować oryginalną wiadomość .eml.')
+        with db() as con:
+            con.begin_write()
+            # Recheck after network I/O: a concurrent spam action must prevent saving.
+            row = owned(con, identifier, current)
+            if row['attachments_blocked']:
+                raise HTTPException(422, 'Wiadomość została oznaczona jako spam. Załącznik nie został zapisany.')
+            latest = con.execute('SELECT disk_key FROM client_mail_attachments WHERE id=? AND mail_id=?', (attachment_id, identifier)).fetchone()
+            if not latest: raise HTTPException(404, 'Nie znaleziono załącznika.')
+            if not latest['disk_key']:
+                key = mail_attachments.put(data, current['id'])
+                try:
+                    con.execute('UPDATE client_mail_attachments SET disk_key=?,data=NULL,size=? WHERE id=?',
+                                (key, len(data), attachment_id))
+                except Exception:
+                    mail_attachments.disk_path(key).unlink(missing_ok=True)
+                    raise
             from urllib.parse import quote
-            return Response(bytes(part['data']), media_type='application/octet-stream',
+            return Response(data, media_type='application/octet-stream',
                             headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(part['name'], safe=''),
-                                     'X-Content-Type-Options': 'nosniff'})
+                                     'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store'})
 
     @app.post('/api/client-mail/{identifier}/analysis')
     async def analyze(identifier: str, current=Depends(user)):

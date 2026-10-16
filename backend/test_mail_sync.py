@@ -1,5 +1,8 @@
 import imaplib
 import pytest
+from email import policy
+from email.parser import BytesParser
+from datetime import datetime, timedelta, timezone
 from backend import mail_sync, mail_settings
 from backend.test_client_mail import eml
 from backend.test_storage import app_client
@@ -12,6 +15,9 @@ class FakeIMAP:
     validity = b'123'
     fail = False
     calls = []
+    clock = datetime(2026, 10, 16, 12, tzinfo=timezone.utc)
+    uids = [b'1', b'2']
+    dates = {}
     def __init__(self, *args, **kwargs): pass
     def login(self, *args): return 'OK', []
     def starttls(self, **kwargs): return 'OK', []
@@ -23,18 +29,32 @@ class FakeIMAP:
         self.calls.append((command, args))
         if self.fail: raise imaplib.IMAP4.error('private server error')
         if command == 'search':
-            assert args == (None, 'ALL')
-            return 'OK', [b'1 2']
-        if args[1] == '(RFC822.SIZE FLAGS)':
-            return 'OK', [b'1 (UID ' + args[0] + b' RFC822.SIZE 300 FLAGS (' + (b'\\Seen' if args[0] == b'2' else b'') + b'))']
-        assert args[1] == '(BODY.PEEK[])'
-        return 'OK', [(b'1 (BODY[] {300}', eml()), b')']
+            assert len(args) == 3 and args[:2] == (None, 'SINCE')
+            return 'OK', [b' '.join(self.uids)]
+        if args[1] == '(UID RFC822.SIZE FLAGS INTERNALDATE)':
+            return 'OK', [b'1 (UID ' + uid + b' RFC822.SIZE 300 FLAGS (' + (b'\\Seen' if uid == b'2' else b'') + b') INTERNALDATE "' +
+                          self.dates.get(uid, self.clock - timedelta(hours=1)).strftime('%d-%b-%Y %H:%M:%S %z').encode() + b'")'
+                          for uid in args[0].split(b',')]
+        message = BytesParser(policy=policy.default).parsebytes(eml())
+        if args[1] == '(BODYSTRUCTURE)':
+            return 'OK', [b'1 (BODYSTRUCTURE (("TEXT" "PLAIN" NIL NIL NIL "8BIT" 80 1)("APPLICATION" "PDF" NIL NIL NIL "BASE64" 16) "MIXED"))']
+        section = args[1].split('[')[1].split(']')[0]
+        if section == 'HEADER':
+            payload = message.as_bytes().split(b'\n\n', 1)[0] + b'\n\n'
+        else:
+            number = int(section.split('.')[0])
+            part = list(message.iter_parts())[number - 1]
+            headers, body = part.as_bytes().split(b'\n\n', 1)
+            payload = headers + b'\n\n' if section.endswith('.MIME') else body
+        return 'OK', [(b'1 (BODY[' + section.encode() + b'] {300}', payload), b')']
     def logout(self): return 'BYE', []
 
 
 @pytest.fixture
 def imap(monkeypatch):
     FakeIMAP.calls = []; FakeIMAP.validity = b'123'; FakeIMAP.fail = False
+    FakeIMAP.uids = [b'1', b'2']; FakeIMAP.dates = {}
+    monkeypatch.setattr(mail_sync, 'utc_now', lambda: FakeIMAP.clock)
     monkeypatch.setattr(mail_sync.imaplib, 'IMAP4_SSL', FakeIMAP)
     monkeypatch.setattr(mail_sync.imaplib, 'IMAP4', FakeIMAP)
     return FakeIMAP

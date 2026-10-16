@@ -1,7 +1,9 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import MailSettings from './MailSettings.vue'
-import { Mail, Search, Sparkles, Settings, Plus, Upload, RefreshCw, Star, Reply, Forward, Trash2, Archive, Paperclip, Inbox, Send, FileText, ShieldAlert, ShieldCheck, Building2, HardDrive, FolderPlus, X, Download, ChevronLeft, List, LayoutGrid, CheckSquare, Lightbulb, AlertCircle, Pin } from 'lucide-vue-next'
+import { mailSenderKind } from './mailSenderKind.js'
+import { Handshake, UserRound, Megaphone, Bell, Ban } from 'lucide-vue-next'
+import { Mail, Search, Sparkles, Settings, Plus, Upload, RefreshCw, Star, Reply, Forward, Trash2, Archive, Paperclip, Inbox, Send, FileText, ShieldAlert, ShieldCheck, Building2, Landmark, HardDrive, FolderPlus, X, Download, ChevronLeft, List, LayoutGrid, CheckSquare, Lightbulb, AlertCircle, Pin } from 'lucide-vue-next'
 const props = defineProps({ api: Function, initialFolder: String, folderRequest: Number, initialMessageId: String })
 const emit = defineEmits(['folder-change', 'message-opened'])
 const messages = ref([]), selectedId = ref(null), folder = ref(props.initialFolder || 'inbox'), filter = ref('all'), search = ref({ email: '', subject: '', content: '', filename: '' }), sort = ref('newest'), grid = ref(false)
@@ -11,6 +13,13 @@ watch(() => [props.initialFolder, props.folderRequest], ([next, request], previo
 watch(() => props.initialMessageId, async id => { if (id) { await run(load); await showRequestedMessage(id) } })
 const headerSearch = ref('')
 const categoryFilter = ref('')
+const syncHours = ref(24)
+const timeRanges = [{ hours: 24, label: '24 h' }, { hours: 48, label: '48 h' }, { hours: 168, label: '7 dni' }, { hours: 720, label: '30 dni' }]
+async function changeTimeRange(hours) {
+  if (busy.value || syncHours.value === hours) return
+  syncHours.value = hours; selectedId.value = null
+  await run(refresh)
+}
 const categories = { spam: 'Spam', advertisement: 'Reklama', invoice: 'Faktura', payment: 'Płatność', order: 'Zamówienie', newsletter: 'Newsletter', notification: 'Powiadomienie', correspondence: 'Korespondencja', other: 'Inne' }
 const companies = ref([]), companyEditor = ref(null)
 const driveDialog = ref(null), driveFolders = ref([]), driveAccess = ref({}), driveLoading = ref(false), driveSaving = ref(false), driveError = ref('')
@@ -73,6 +82,17 @@ const filtered = computed(() => messages.value.filter(m => m.folder === folder.v
     && (!search.value.filename.trim() || m.attachments.some(part => matches(part.name, search.value.filename))))
   .sort((a, b) => (sort.value === 'newest' ? -1 : 1) * (Date.parse(a.created_at) - Date.parse(b.created_at))))
 const initials = m => (m.sender_name || m.sender_email || '?').split(/\s+/).slice(0, 2).map(x => x[0]).join('').toUpperCase()
+const senderKinds = {
+  company: { icon: Handshake, label: 'Firma / klient', hint: 'Adres lub domena przypisane do firmy' },
+  government: { icon: Landmark, label: 'Domena rządowa', hint: 'Rozpoznana domena rządowa; autentyczność e-maila niepotwierdzona' },
+  other: { icon: UserRound, label: 'Pozostały nadawca', hint: 'Adres nieprzypisany do firmy ani rozpoznanej domeny rządowej' },
+  marketing: { icon: Megaphone, label: 'Reklama / newsletter', hint: 'Wiadomość z kategorią reklamy lub newslettera' },
+  notification: { icon: Bell, label: 'Powiadomienie', hint: 'Wiadomość z kategorią powiadomienia' },
+  phishing: { icon: ShieldAlert, label: 'Podejrzenie phishingu', hint: 'Wykryto sygnały próby wyłudzenia danych' },
+  spam: { icon: Ban, label: 'Spam', hint: 'Wiadomość w Spamie lub od zablokowanego adresu' },
+  sent: { icon: Send, label: 'Wysłana', hint: 'Wiadomość wysłana przez Ciebie' },
+  draft: { icon: FileText, label: 'Robocza', hint: 'Niewysłany szkic wiadomości' }
+}
 const date = value => new Date(value).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' })
 const fullDate = value => new Date(value).toLocaleString('pl-PL', { dateStyle: 'medium', timeStyle: 'short' })
 const size = value => value < 1024 ? `${value} B` : value < 1024 * 1024 ? `${Math.round(value / 1024)} KB` : `${(value / 1024 / 1024).toFixed(1)} MB`
@@ -83,22 +103,25 @@ async function run(action) {
   try { return await action() } catch (err) { error.value = err.message } finally { busy.value = false }
 }
 async function load() {
-  const result = await Promise.all([props.api('/client-mail'), props.api('/client-mail/settings')])
+  const include = props.initialMessageId || selectedId.value
+  const path = `/client-mail?hours=${syncHours.value}` + (include ? `&include_id=${encodeURIComponent(include)}` : '')
+  const result = await Promise.all([props.api(path), props.api('/client-mail/settings')])
   messages.value = result[0]; settings.value = result[1]
   if (!selected.value) selectedId.value = null
 }
 async function refresh() {
-  await load()
+  if (!settings.value) settings.value = await props.api('/client-mail/settings')
   if (!settings.value.account.imap.enabled) {
+    await load()
     notice.value = 'Aby odbierać wiadomości, włącz IMAP w ustawieniach poczty.'
     return
   }
-  const result = await props.api('/client-mail/sync', 'POST')
+  const result = await props.api('/client-mail/sync', 'POST', { hours: syncHours.value })
   await load()
   notice.value = `Pobrano wiadomości: ${result.imported}.` + (result.remaining ? ` Pozostało: ${result.remaining}. Odśwież ponownie.` : '') + (result.skipped ? ` Pominięto zbyt duże lub niepoprawne wiadomości: ${result.skipped}.` : '')
 }
 async function scanSpam() {
-  const result = await props.api('/client-mail/spam-scan', 'POST')
+  const result = await props.api(`/client-mail/spam-scan?hours=${syncHours.value}`, 'POST')
   await load()
   if (selected.value?.folder === 'spam' && folder.value !== 'spam') selectedId.value = null
   if (result.moved) {
@@ -149,7 +172,7 @@ async function removeCompany() {
 }
 async function spamSender() {
   const message = selected.value
-  if (!message || message.safe || message.company) return
+  if (!message || message.safe || message.company || message.spam_protected) return
   await run(async () => {
     await props.api(`/client-mail/${message.id}/spam-address`, message.blocked ? 'DELETE' : 'POST', { version: message.version })
     await load()
@@ -211,15 +234,19 @@ async function analyze() {
 }
 function useReply() { compose(selected.value, 'reply'); composer.value.content = currentAnalysis.value.reply }
 async function download(part) {
+  if (selected.value?.attachments_blocked) return
   await run(async () => {
     const response = await fetch(`/api/client-mail/${selected.value.id}/attachments/${part.id}`, { credentials: 'same-origin' })
-    if (!response.ok) throw new Error('Nie udało się pobrać załącznika.')
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null)
+      throw new Error(detail?.detail || 'Nie udało się pobrać załącznika.')
+    }
     const url = URL.createObjectURL(await response.blob()), a = document.createElement('a')
     a.href = url; a.download = part.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
   })
 }
 async function openDriveDialog(part = null) {
-  if (!selected.value || driveSaving.value) return
+  if (!selected.value || selected.value.attachments_blocked || driveSaving.value) return
   const message = selected.value
   const dialog = { mailId: message.id, attachments: message.attachments.map(item => ({ ...item })),
     chosen: part ? [part.id] : message.attachments.map(item => item.id), destination: null,
@@ -251,7 +278,10 @@ async function saveToDrive() {
     for (const id of chosen) {
       const part = dialog.attachments.find(item => item.id === id)
       const response = await fetch(`/api/client-mail/${dialog.mailId}/attachments/${id}`, { credentials: 'same-origin' })
-      if (!response.ok) throw new Error(`Nie udało się odczytać załącznika „${part.name}”.`)
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null)
+        throw new Error(detail?.detail || `Nie udało się odczytać załącznika „${part.name}”.`)
+      }
       const file = await response.blob()
       const data = new FormData(); data.append('file', file, part.name)
       if (dialog.destination) data.append('folder_id', dialog.destination)
@@ -278,10 +308,11 @@ onMounted(async () => { await run(async () => { try { await scanSpam() } catch (
     <div class="mail-layout" :class="{ 'message-open': selected }">
       <aside class="mail-list-panel">
         <div class="mail-list-heading"><span class="mail-folder-title">{{ folders.find(f => f.id === folder)?.label }} <small>{{ filtered.length }}</small><button class="mail-icon" :disabled="busy" aria-label="Odśwież pocztę" title="Odśwież pocztę" @click="run(refresh)"><RefreshCw :size="17" /></button></span><div><button class="mail-icon" :disabled="busy" aria-label="Importuj wiadomość .eml" @click="importInput.click()" title="Importuj wiadomość .eml"><Upload :size="17" /></button><button class="mail-new" title="Napisz nową wiadomość" :disabled="busy" @click="compose()"><Plus :size="16" /> Napisz</button></div></div>
+        <div class="mail-time-range" role="group" aria-label="Zakres pobierania i listy wiadomości"><span>Ostatnie</span><button v-for="range in timeRanges" :key="range.hours" :disabled="busy" :aria-pressed="syncHours === range.hours" :title="`Pobierz i pokaż wiadomości z ostatnich ${range.label}`" @click="changeTimeRange(range.hours)">{{ range.label }}</button><RefreshCw v-if="busy" class="mail-range-loading" :size="14" aria-label="Wczytywanie poczty" /></div>
         <input ref="importInput" type="file" accept=".eml" hidden aria-label="Plik wiadomości .eml" @change="importMail" />
         <div class="mail-message-list" :class="{ tiles: grid }" aria-label="Lista wiadomości">
-          <article v-for="(message, index) in filtered" :key="message.id" class="mail-row" :class="{ selected: selectedId === message.id, unread: message.unread }">
-            <button class="mail-row-open" :title="`Otwórz wiadomość: ${message.subject || '(bez tematu)'}`" :disabled="busy" @click="open(message)"><span class="mail-avatar" :class="`tone-${index % 5}`">{{ initials(message) }}</span><span class="mail-row-text"><strong>{{ folder === 'sent' || folder === 'drafts' ? message.recipient || 'Brak odbiorcy' : message.sender_name }}</strong><span>{{ message.subject || '(bez tematu)' }}</span><small>{{ message.content || 'Pusty szkic' }}</small></span></button>
+          <article v-for="message in filtered" :key="message.id" class="mail-row" :class="{ selected: selectedId === message.id, unread: message.unread }">
+            <button class="mail-row-open" :title="`Otwórz wiadomość: ${message.subject || '(bez tematu)'}`" :disabled="busy" @click="open(message)"><span class="mail-sender-symbol" :class="'sender-' + mailSenderKind(message)" role="img" :aria-label="senderKinds[mailSenderKind(message)].label" :title="senderKinds[mailSenderKind(message)].hint"><component :is="senderKinds[mailSenderKind(message)].icon" :size="25" :stroke-width="1.7" aria-hidden="true" /></span><span class="mail-row-text"><strong>{{ folder === 'sent' || folder === 'drafts' ? message.recipient || 'Brak odbiorcy' : message.sender_name }}</strong><span v-if="message.company || message.government" class="mail-row-affiliations"><span v-if="message.company" class="mail-row-company" :title="`Firma: ${message.company.name}`"><Building2 :size="12" /><span>{{ message.company.name }}</span></span><span v-if="message.government" class="mail-row-government" :title="`Domena rządowa: ${message.government.domain} · ${message.government.country}. Autentyczność wiadomości niepotwierdzona.`"><Landmark :size="12" /><span>{{ message.government.suffix }} · {{ message.government.country }}</span></span></span><span>{{ message.subject || '(bez tematu)' }}</span><small>{{ message.content || 'Pusty szkic' }}</small></span></button>
             <div class="mail-row-meta"><span v-if="message.category" class="mail-category" :class="message.category" :title="message.category_reason || categories[message.category]">{{ categories[message.category] }}</span><time :datetime="message.created_at">{{ date(message.created_at) }}</time><button class="mail-icon star" :class="{ starred: message.starred }" :disabled="busy" :aria-label="message.starred ? 'Usuń gwiazdkę' : 'Oznacz gwiazdką'" :aria-pressed="!!message.starred" @click="run(() => patch(message, { starred: !message.starred }))" :title="message.starred ? 'Usuń gwiazdkę' : 'Oznacz gwiazdką'"><Star :size="17" /></button><button class="mail-tag mail-row-label" :class="message.label || 'none'" :disabled="busy" :title="`Etykieta: ${labels[message.label] || 'Brak'}`" :aria-label="`Zmień etykietę: ${message.subject || '(bez tematu)'}`" popovertarget="mail-label-options" @click.stop="positionLabelMenu($event, message)">{{ labels[message.label] || 'Brak' }}</button><Paperclip v-if="message.attachments.length" :size="14" /></div>
           </article>
           <div v-if="!filtered.length" class="mail-list-empty"><Inbox :size="35" /><h2>{{ busy ? 'Wczytywanie poczty…' : 'Brak wiadomości' }}</h2><p>{{ messages.length ? 'Zmień folder, filtr lub wyszukiwanie.' : 'Importuj wiadomość .eml lub napisz pierwszego maila.' }}</p><button v-if="!messages.length" :disabled="busy" title="Importuj plik EML z załącznikami" @click="importInput.click()"><Upload :size="16" /> Importuj .eml</button></div>
@@ -289,10 +320,12 @@ onMounted(async () => { await run(async () => { try { await scanSpam() } catch (
       </aside>
       <section class="mail-reader" aria-label="Podgląd wiadomości">
         <template v-if="selected">
-          <div class="mail-reader-toolbar"><button class="mobile-back mail-icon" aria-label="Wróć do listy" @click="selectedId = null" title="Wróć do listy"><ChevronLeft :size="18" /></button><button :disabled="busy" title="Odpowiedz nadawcy wiadomości" @click="compose(selected, 'reply')"><Reply :size="17" /> Odpowiedz</button><button :disabled="busy" title="Przekaż treść wiadomości innemu odbiorcy" @click="compose(selected, 'forward')"><Forward :size="17" /> Przekaż dalej</button><button v-if="!selected.safe && !selected.company" class="mail-spam-button" :disabled="busy || !selected.sender_email" :title="selected.blocked ? 'Zezwól na nowe wiadomości od tego adresu' : 'Przenieś korespondencję od tego adresu do Spamu i blokuj kolejne wiadomości'" @click="spamSender"><ShieldAlert :size="17" />{{ selected.blocked ? 'Usuń ze spamu' : 'SPAM' }}</button><button :disabled="busy" aria-label="Przenieś do śmieci" @click="run(() => patch(selected, { folder: 'trash' }))" title="Przenieś do śmieci"><Trash2 :size="17" /></button><button :disabled="busy" aria-label="Archiwizuj" @click="run(() => patch(selected, { folder: 'archive' }))" title="Archiwizuj"><Archive :size="17" /></button></div>
+          <div class="mail-reader-toolbar"><button class="mobile-back mail-icon" aria-label="Wróć do listy" @click="selectedId = null" title="Wróć do listy"><ChevronLeft :size="18" /></button><button :disabled="busy" title="Odpowiedz nadawcy wiadomości" @click="compose(selected, 'reply')"><Reply :size="17" /> Odpowiedz</button><button :disabled="busy" title="Przekaż treść wiadomości innemu odbiorcy" @click="compose(selected, 'forward')"><Forward :size="17" /> Przekaż dalej</button><button v-if="!selected.safe && !selected.company && !selected.spam_protected" class="mail-spam-button" :disabled="busy || !selected.sender_email" :title="selected.blocked ? 'Zezwól na nowe wiadomości od tego adresu' : 'Przenieś korespondencję od tego adresu do Spamu i blokuj kolejne wiadomości'" @click="spamSender"><ShieldAlert :size="17" />{{ selected.blocked ? 'Usuń ze spamu' : 'SPAM' }}</button><button :disabled="busy" aria-label="Przenieś do śmieci" @click="run(() => patch(selected, { folder: 'trash' }))" title="Przenieś do śmieci"><Trash2 :size="17" /></button><button :disabled="busy" aria-label="Archiwizuj" @click="run(() => patch(selected, { folder: 'archive' }))" title="Archiwizuj"><Archive :size="17" /></button></div>
           <div class="mail-reader-content">
+          <p v-if="selected.phishing_warning || (!selected.safe && selected.category_reason?.startsWith('Podejrzenie phishingu:'))" class="mail-phishing-warning" role="alert"><ShieldAlert :size="20" /><span>{{ selected.phishing_warning || selected.category_reason }}</span></p>
           <div class="mail-sender"><span class="mail-avatar tone-0">{{ initials(selected) }}</span><div><small>Od: {{ selected.sender_name }}</small>
-            <div class="mail-sender-address"><strong>{{ selected.sender_email }}</strong><template v-if="selected.company"><button class="mail-company" :disabled="busy" title="Zmień przypisanie adresu lub domeny do firmy" @click="editCompany"><Building2 :size="15" />{{ selected.company.name }}</button></template><template v-else><button :disabled="busy || !selected.sender_email" title="Przypisz adres e-mail lub jego domenę do firmy" @click="editCompany"><Building2 :size="15" /> Przypisz firmę</button><button v-if="!selected.safe && !selected.company" class="mail-spam-button" :disabled="busy || !selected.sender_email" :title="selected.blocked ? 'Usuń adres z listy spamu' : 'Oznacz adres jako spam i przenieś jego wiadomości do Spamu'" @click="spamSender"><ShieldAlert :size="15" />{{ selected.blocked ? 'Usuń ze spamu' : 'SPAM' }}</button></template></div>
+            <div class="mail-sender-address"><strong>{{ selected.sender_email }}</strong><template v-if="selected.company"><button class="mail-company" :disabled="busy" title="Zmień przypisanie adresu lub domeny do firmy" @click="editCompany"><Building2 :size="15" />{{ selected.company.name }}</button></template><template v-else><button :disabled="busy || !selected.sender_email" title="Przypisz adres e-mail lub jego domenę do firmy" @click="editCompany"><Building2 :size="15" /> Przypisz firmę</button><button v-if="!selected.safe && !selected.company && !selected.spam_protected" class="mail-spam-button" :disabled="busy || !selected.sender_email" :title="selected.blocked ? 'Usuń adres z listy spamu' : 'Oznacz adres jako spam i przenieś jego wiadomości do Spamu'" @click="spamSender"><ShieldAlert :size="15" />{{ selected.blocked ? 'Usuń ze spamu' : 'SPAM' }}</button></template></div>
+            <div v-if="selected.government" class="mail-government"><span><Building2 :size="16" /> Domena rządowa · {{ selected.government.country }} <strong>{{ selected.government.domain }}</strong></span><small>Rozpoznano domenę w adresie nadawcy. Autentyczność wiadomości niepotwierdzona.</small><small v-if="selected.government.spam_protected">Domena gov.pl jest chroniona przed oznaczeniem jako spam.</small></div>
             <div class="mail-inline-label"><span>Etykieta:</span><button class="mail-label-trigger" :class="selected.label || 'none'" :disabled="busy" aria-label="Etykieta wiadomości" title="Wybierz etykietę wiadomości" popovertarget="mail-label-options" @click="positionLabelMenu"><span>{{ labels[selected.label] || 'Brak' }}</span><ChevronLeft :size="14" /></button></div>
 
             <span v-if="selected.safe" class="mail-safe" title="Nadawca przypisany do firmy w Twoim słowniku"><ShieldCheck :size="15" /> Bezpieczna · przypisana firma</span><span v-else-if="selected.blocked" class="mail-blocked"><ShieldAlert :size="15" /> Adres na liście spamu</span><small>Do: {{ selected.recipient || 'mnie' }}</small>
@@ -307,7 +340,8 @@ onMounted(async () => { await run(async () => { try { await scanSpam() } catch (
       <aside class="mail-ai mail-side-panel" aria-label="Załączniki i działania wiadomości">
         <template v-if="selected">
           <section class="mail-side-attachments" aria-label="Załączniki wiadomości"><h2><Paperclip :size="18" /> Załączniki <small>{{ selected.attachments.length }}</small></h2>
-            <div v-if="selected.attachments.length" class="mail-attachments">
+            <p v-if="selected.attachments_blocked" class="mail-side-empty">Załączniki spamu nie są pobierane ani zapisywane. Aby uzyskać dostęp do pliku, najpierw przywróć wiadomość do Odebranych.</p>
+            <div v-else-if="selected.attachments.length" class="mail-attachments">
               <div v-for="part in selected.attachments" :key="part.id" class="mail-attachment-card"><div class="mail-file-description"><FileText class="attachment-icon" :size="23" /><span>{{ part.name }}<small>{{ size(part.size) }}</small></span></div><div class="mail-file-actions"><button :disabled="busy" :aria-label="`Pobierz na komputer: ${part.name}`" :title="`Pobierz na komputer: ${part.name}`" @click="download(part)"><Download :size="18" /></button><button :disabled="busy || driveSaving" :aria-label="`Zapisz na Dysku portalu: ${part.name}`" :title="`Zapisz na Dysku portalu: ${part.name}`" @click="openDriveDialog(part)"><HardDrive :size="18" /></button></div></div>
               <button class="mail-save-all" :disabled="busy || driveSaving" title="Wybierz katalog na Dysku portalu i zapisz wszystkie załączniki" @click="openDriveDialog()"><HardDrive :size="16" /> Zapisz wszystkie na Dysku</button>
             </div><p v-else class="mail-side-empty">Ta wiadomość nie ma załączników.</p>
@@ -393,6 +427,7 @@ onMounted(async () => { await run(async () => { try { await scanSpam() } catch (
 .company-dialog .mail-unlink-company { margin-right:auto; color:var(--theme-danger,#ba253b); }
 .mail-safe,.mail-blocked { display:inline-flex; align-items:center; gap:5px; font-size:11px; }
 .mail-safe { color:var(--success); }.mail-blocked { color:var(--theme-danger,#ba253b); }
+.mail-government { display:grid; gap:5px; margin:7px 0; padding:10px; border:1px solid color-mix(in srgb,var(--mail-blue) 20%,var(--border)); border-radius:10px; background:var(--mail-blue-soft); }.mail-government > span { display:flex; align-items:center; flex-wrap:wrap; gap:6px; color:var(--mail-blue); font-size:11px; }.mail-government strong { overflow-wrap:anywhere; }.mail-government > small { font-size:10px; line-height:1.6; color:var(--secondary); }
 .company-dialog { display:grid; gap:14px; }.company-dialog header { margin:0; gap:10px; }
 .company-dialog h2 { font-size:20px; }.company-dialog label { display:grid; gap:7px; font-size:12px; }
 .company-dialog footer { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
@@ -416,10 +451,13 @@ onMounted(async () => { await run(async () => { try { await scanSpam() } catch (
 .mail-inline-label { display:flex; flex-direction:row; flex-wrap:wrap; align-items:center; gap:8px; margin:8px 0 3px; font-size:11px; color:var(--secondary); }
 .mail-label-trigger { padding:5px 9px; gap:8px; font-size:11px; background:var(--surface-soft); border-color:transparent; border-radius:7px; }.mail-label-trigger > svg { transform:rotate(-90deg); }.mail-label-trigger.urgent { color:var(--theme-danger,#ba253b); background:color-mix(in srgb,#ff637d 12%,var(--surface)); }.mail-label-trigger.invoice { color:var(--success); background:var(--success-soft); }.mail-label-trigger.offer { color:var(--accent); background:var(--accent-soft); }
 .mail-row-label { border:0; cursor:pointer; }.mail-row-label:hover { box-shadow:0 0 0 1px var(--accent); }.mail-row-label.none { color:var(--muted); }
+.mail-sender-symbol { display:grid; place-items:center; position:relative; flex-shrink:0; width:45px; height:45px; border-radius:15px; color:var(--sender-color,var(--secondary)); background:linear-gradient(145deg,color-mix(in srgb,var(--sender-color,var(--secondary)) 17%,var(--surface)),color-mix(in srgb,var(--sender-color,var(--secondary)) 5%,var(--surface))); border:1px solid color-mix(in srgb,var(--sender-color,var(--secondary)) 22%,var(--border)); box-shadow:0 3px 7px color-mix(in srgb,var(--sender-color,var(--secondary)) 8%,transparent); }.mail-sender-symbol::after { content:''; position:absolute; bottom:-2px; right:-2px; width:9px; height:9px; border-radius:50%; border:2px solid var(--surface); background:var(--sender-color,var(--secondary)); }.sender-company { --sender-color:#138b80; }.sender-government { --sender-color:#2879dd; }.sender-marketing { --sender-color:#9560ce; }.sender-notification { --sender-color:#b37a12; }.sender-phishing,.sender-spam { --sender-color:#d03e5c; }.sender-sent,.sender-draft { --sender-color:var(--accent); }
+.mail-row-text .mail-row-affiliations { display:flex; flex-wrap:wrap; gap:5px; overflow:visible; white-space:normal; }.mail-row-affiliations > span { display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:100%; padding:4px 6px; border-radius:5px; font-size:10px; line-height:1.3; }.mail-row-affiliations > span > svg { flex-shrink:0; }.mail-row-affiliations > span > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }.mail-row-company { background:var(--accent-soft); color:var(--accent); }.mail-row-government { background:var(--mail-blue-soft); color:var(--mail-blue); border:1px solid color-mix(in srgb,var(--mail-blue) 25%,var(--border)); }
 .mail-label-popup { position:fixed; margin:0; width:200px; padding:6px; border:1px solid var(--border); border-radius:12px; background:var(--surface); color:var(--text); box-shadow:0 10px 35px #15213d25; }
 .mail-label-popup button { display:flex; width:100%; justify-content:flex-start; gap:10px; border:0; padding:10px; font-size:12px; border-radius:7px; background:transparent; }.mail-label-popup button:hover,.mail-label-popup button[aria-pressed="true"] { background:var(--accent-soft); }.mail-label-dot { width:8px; height:8px; border-radius:50%; background:var(--muted); flex-shrink:0; }.mail-label-dot.urgent { background:#ed4764; }.mail-label-dot.invoice { background:#17a383; }.mail-label-dot.offer { background:#a27aef; }.mail-label-check { margin-left:auto; color:var(--accent); }
 .mail-tag.invoice { color:#13775b; background:#dff5ee; }.mail-tag.offer { color:#915a0b; background:#fff0dd; }
 .mail-spam-button { color:var(--theme-danger,#ba253b); }
+.mail-phishing-warning { display:flex; align-items:flex-start; gap:10px; padding:13px; margin:0 0 20px; border:1px solid color-mix(in srgb,#ed4764 30%,var(--border)); border-radius:10px; color:var(--theme-danger,#ba253b); background:color-mix(in srgb,#ed4764 8%,var(--surface)); font-size:12px; line-height:1.7; }.mail-phishing-warning svg { flex-shrink:0; margin-top:2px; }
 .mail-reader-toolbar { flex-wrap:wrap; }.mail-reader-toolbar > button { white-space:nowrap; }.mail-reader-toolbar .mail-spam-button { color:var(--theme-danger,#ba253b); }
 .mail-side-panel { background:var(--surface-soft); display:flex; flex-direction:column; gap:22px; }
 .mail-side-panel > * { flex-shrink:0; }
@@ -428,7 +466,9 @@ onMounted(async () => { await run(async () => { try { await scanSpam() } catch (
 .mail-file-description { display:flex; align-items:center; gap:8px; min-width:0; flex:1; }.mail-file-description > svg { flex-shrink:0; }.mail-file-description > span { min-width:0; overflow-wrap:anywhere; font-size:11px; }.mail-file-description small { display:block; color:var(--muted); margin-top:5px; font-size:10px; }
 .mail-file-actions { display:flex; align-items:center; gap:2px; flex-shrink:0; }.mail-attachments .mail-file-actions button { width:32px; min-width:32px; height:34px; padding:6px; border-radius:7px; background:transparent; }.mail-attachments .mail-file-actions button:last-child { color:var(--mail-blue); }.mail-attachments .mail-file-actions button:hover { background:var(--accent-soft); }
 .mail-side-empty { color:var(--secondary); font-size:12px; line-height:1.7; margin:0; }
-@media (min-width:1251px) { .mail-layout { grid-template-columns:minmax(280px,.95fr) minmax(320px,1.5fr) minmax(245px,.72fr); } }
+.mail-time-range { display:flex; align-items:center; gap:4px; flex-wrap:wrap; padding:10px 12px; border-bottom:1px solid var(--border); flex-shrink:0; }.mail-time-range > span { font-size:10px; color:var(--secondary); margin-right:5px; }.mail-time-range button { padding:6px 9px; border:1px solid transparent; background:var(--surface-soft); color:var(--secondary); font-size:11px; border-radius:7px; }.mail-time-range button[aria-pressed="true"] { color:var(--accent); background:var(--accent-soft); border-color:color-mix(in srgb,var(--accent) 25%,var(--border)); }.mail-range-loading { margin-left:auto; color:var(--accent); animation:mail-range-spin 1s linear infinite; }@keyframes mail-range-spin { to { transform:rotate(360deg); } }@media(prefers-reduced-motion:reduce) { .mail-range-loading { animation:none; } }
+@media (min-width:1251px) { .mail-layout { grid-template-columns:minmax(350px,1.2fr) minmax(320px,1.45fr) minmax(230px,.65fr); } }
+@media (min-width:651px) and (max-width:1250px) { .mail-layout { grid-template-columns:minmax(300px,1fr) minmax(280px,1.15fr); } }
 @media (min-width:651px) and (max-width:1250px) { .mail-side-panel { display:grid; grid-template-columns:1fr 1fr; align-items:start; }.mail-side-panel > .ai-group { grid-column:1 / -1; } }
 @media (max-width:650px) { .mail-side-panel { display:none; }.message-open .mail-side-panel { display:flex; }.mail-list-heading { padding:12px 10px; }.mail-folder-title { gap:4px; } }
 .mail-spam-notice { display:flex; align-items:center; gap:12px; }

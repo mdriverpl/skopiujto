@@ -4,6 +4,7 @@ import secrets
 import re
 import unicodedata
 from html import unescape
+from datetime import timedelta, datetime, timezone
 from email.utils import parseaddr
 
 from fastapi import HTTPException
@@ -70,22 +71,92 @@ def context(con, user_id):
     return rules, spam, exclusions
 
 
+def government_domain(domain):
+    for suffix, country in (('gov.pl', 'Polska'), ('gov.in', 'Indie')):
+        if domain == suffix or domain.endswith('.' + suffix):
+            return {'domain': domain, 'suffix': suffix, 'country': country,
+                    'authentication': 'unverified', 'spam_protected': suffix == 'gov.pl'}
+    return None
+
+
 def classify(sender, rules_context):
     rules, spam, exclusions = rules_context
     try: sender = address(sender)
-    except HTTPException: return {'company': None, 'safe': False, 'blocked': False}
+    except HTTPException: return {'company': None, 'safe': False, 'blocked': False, 'government': None, 'spam_protected': False}
+    government = government_domain(sender.split('@')[1])
     company = None if sender in exclusions else rules.get(('email', sender)) or rules.get(('domain', sender.split('@')[1]))
-    blocked = sender in spam and not company
-    return {'company': company, 'safe': bool(company), 'blocked': blocked}
+    protected = bool(company) or bool(government and government['spam_protected'])
+    blocked = sender in spam and not protected
+    return {'company': company, 'safe': bool(company), 'blocked': blocked,
+            'government': government, 'spam_protected': protected}
+
+
+def normalized_text(value):
+    value = unicodedata.normalize('NFKD', unescape(value or '').casefold().replace('ł', 'l'))
+    return re.sub(r'\s+', ' ', ''.join(c for c in value if not unicodedata.combining(c))).strip()
+
+
+def phishing_reason(subject, content):
+    """Detect combined account/payment lures; never trust or block a TLD alone."""
+    subject = normalized_text(subject)
+    text = normalized_text(content)[:100000]
+    # Warnings and normal invoices alone are not credential requests. Require
+    # an actionable subject and matching requests in the actual message body.
+    update = re.search(r'\b(zaktualizuj|aktualizacj\w*|zweryfikuj|weryfikacj\w*|'
+                       r'potwierdz|verify|update|confirm)\b', subject)
+    sensitive = re.search(r'\b(platnosci\w*|platnosc|danych|dane|konta|konto|karty|'
+                          r'payment\w*|billing|account|card|identity)\b', subject)
+    login = re.search(r'\b(zaloguj sie|zalogowac sie|log in|login|sign in|'
+                      r'zweryfikuj swoje dane|potwierdz swoje dane|verify your (?:account|identity))\b', text)
+    disruption = re.search(r'(przerw\w* w swiadczeniu|nadal korzystac z uslug|'
+                           r'konto zostanie (?:zablokowane|zawieszone)|utrat\w* dostepu|'
+                           r'unikn\w* (?:blokady|zawieszenia)|account (?:will be |has been )?(?:suspended|blocked)|'
+                           r'service interruption|avoid (?:suspension|interruption)|continue using)', text)
+    if update and sensitive and login and disruption:
+        return 'Podejrzenie phishingu: aktualizacja danych konta lub płatności, żądanie logowania i groźba utraty dostępu do usługi.'
+    secrets = re.search(r'(podaj|przeslij|wpisz|enter|provide|send).{0,65}\b('
+                        r'haslo|hasla|password|kod (?:sms|blik|jednorazowy)|one.time (?:code|password)|'
+                        r'cvv|cvc|pin karty|numer karty)', text)
+    link = re.search(r'https?://\S+', text)
+    if update and sensitive and secrets and link:
+        return 'Podejrzenie phishingu: prośba o poufne dane lub kod autoryzacji przy weryfikacji konta albo płatności.'
+    return ''
+
+
+def spam_reason(subject, content):
+    # Phishing checks precede marketing exemptions for invoices and payments.
+    return phishing_reason(subject, content) or promotional_reason(subject, content)
+
+
+def invoice_reason(subject):
+    subject = normalized_text(subject)
+    match = re.search(r'\b(faktur(?:a|y|e|ze|ami|om|ach)?|invoices?|rechnung(?:en)?|'
+                      r'rachun(?:ek|ki|ku|kow)|e[ -]?faktur(?:a|y|e)|pro[ -]?forma)\b|'
+                      r'\binv[\s.:#-]*\d', subject)
+    return 'Filtr lokalny: temat wskazuje fakturę lub rachunek.' if match else ''
+
+
+def mark_invoice(con, row, bump_version=False):
+    if row['folder'] not in ('inbox', 'archive') or row['category'] == 'spam': return False
+    reason = invoice_reason(row['subject'])
+    if not reason: return False
+    changes = {}
+    if not row['label'] and row['label_source'] != 'manual':
+        changes.update(label='invoice', label_source='local')
+    if not row['category'] and row['category_source'] != 'manual':
+        changes.update(category='invoice', category_source='local', category_reason=reason)
+    if not changes: return False
+    fields = ','.join(f'{key}=?' for key in changes)
+    if bump_version: fields += ',version=version+1'
+    con.execute(f'UPDATE client_mail SET {fields} WHERE id=? AND user_id=?',
+                (*changes.values(), row['id'], row['user_id']))
+    return True
 
 
 def promotional_reason(subject, content):
     """Local filter requiring several matching advertising signals."""
-    def normalize(value):
-        value = unicodedata.normalize('NFKD', unescape(value or '').casefold().replace('ł', 'l'))
-        return re.sub(r'\s+', ' ', ''.join(c for c in value if not unicodedata.combining(c))).strip()
-    subject = normalize(subject)
-    content = normalize(content)[:100000]
+    subject = normalized_text(subject)
+    content = normalized_text(content)[:100000]
     if re.search(r'\b(re|fwd?|faktura|invoice|zamowienie|order|platnosc|payment|potwierdzenie)\b', subject):
         return ''
     commercial = re.search(r'\b(kup|kupuj|promocj\w*|rabat\w*|wyprzedaz\w*|oferta specjalna|'
@@ -135,23 +206,36 @@ def promotional_reason(subject, content):
 def apply_incoming(con, user_id, sender, subject='', content=''):
     status = classify(sender, context(con, user_id))
     if status['blocked']: return 'spam'
-    if status['safe']: return 'inbox'
-    return 'spam' if promotional_reason(subject, content) else 'inbox'
+    if status['spam_protected']: return 'inbox'
+    return 'spam' if spam_reason(subject, content) else 'inbox'
 
 
-def scan_inbox(con, user_id):
+def scan_inbox(con, user_id, cutoff=None):
     rules_context = context(con, user_id)
     restore_trusted_spam(con, user_id, rules_context)
     moved = 0
-    for row in con.execute("SELECT * FROM client_mail WHERE user_id=? AND folder='inbox'", (user_id,)).fetchall():
+    query = "SELECT * FROM client_mail WHERE user_id=? AND folder='inbox'"
+    params = (user_id,)
+    if cutoff is not None:
+        query += ' AND created_at>=?'
+        params += ((cutoff - timedelta(days=1)).date().isoformat(),)
+    for row in con.execute(query, params).fetchall():
+        if cutoff is not None:
+            try:
+                stamp = datetime.fromisoformat(row['created_at'].replace('Z', '+00:00'))
+                if stamp.tzinfo is None: stamp = stamp.replace(tzinfo=timezone.utc)
+                if stamp < cutoff: continue
+            except (ValueError, TypeError, AttributeError): continue
         status = classify(row['sender_email'], rules_context)
-        if status['safe'] or row['category_source'] == 'manual': continue
+        if status['spam_protected'] or row['category_source'] == 'manual': continue
         reason = ('Adres nadawcy na Twojej liście spamu.' if status['blocked'] else
-                  promotional_reason(row['subject'], row['content']))
+                  spam_reason(row['subject'], row['content']))
         if not reason: continue
         con.execute("""UPDATE client_mail SET folder='spam',category='spam',category_source='local',
             category_reason=?,version=version+1 WHERE id=?""", (reason, row['id']))
         moved += 1
+    for row in con.execute("SELECT * FROM client_mail WHERE user_id=? AND folder IN ('inbox','archive')", (user_id,)).fetchall():
+        mark_invoice(con, row, bump_version=True)
     return moved
 
 
@@ -159,7 +243,7 @@ def restore_trusted_spam(con, user_id, rules_context=None):
     rules_context = rules_context if rules_context is not None else context(con, user_id)
     restored = 0
     for row in con.execute("SELECT id,sender_email,folder,category FROM client_mail WHERE user_id=? AND (folder='spam' OR category='spam')", (user_id,)).fetchall():
-        if not classify(row['sender_email'], rules_context)['safe']: continue
+        if not classify(row['sender_email'], rules_context)['spam_protected']: continue
         con.execute("""UPDATE client_mail SET folder=?,category=CASE WHEN category='spam' THEN '' ELSE category END,
             category_source=CASE WHEN category='spam' THEN '' ELSE category_source END,
             category_reason=CASE WHEN category='spam' THEN '' ELSE category_reason END,
@@ -170,10 +254,12 @@ def restore_trusted_spam(con, user_id, rules_context=None):
 
 def mark_incoming(con, identifier, user_id):
     row = con.execute('SELECT * FROM client_mail WHERE id=? AND user_id=?', (identifier, user_id)).fetchone()
-    if row['folder'] != 'spam': return
+    if row['folder'] != 'spam':
+        mark_invoice(con, row)
+        return
     status = classify(row['sender_email'], context(con, user_id))
     reason = ('Adres nadawcy na Twojej liście spamu.' if status['blocked'] else
-              promotional_reason(row['subject'], row['content']))
+              spam_reason(row['subject'], row['content']))
     if reason:
         con.execute("UPDATE client_mail SET category='spam',category_source='local',category_reason=? WHERE id=?",
                     (reason, identifier))

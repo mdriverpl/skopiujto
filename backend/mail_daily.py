@@ -42,8 +42,8 @@ def statistics(con, user_id, day):
         counts['total'] += 1
         status = mail_rules.classify(row['sender_email'], rules)
         sent = row['folder'] == 'sent'
-        spam = not sent and not status['safe'] and (row['folder'] == 'spam' or row['category'] == 'spam' or status['blocked'])
-        saved_category = '' if status['safe'] and row['category'] == 'spam' else row['category']
+        spam = not sent and not status['spam_protected'] and (row['folder'] == 'spam' or row['category'] == 'spam' or status['blocked'])
+        saved_category = '' if status['spam_protected'] and row['category'] == 'spam' else row['category']
         category = 'spam' if spam else ('invoice' if row['label'] == 'invoice' else saved_category or 'uncategorized')
         if category not in counts['categories']: category = 'other'
         messages.append({key: row[key] for key in ('id', 'sender_name', 'sender_email', 'subject', 'folder', 'label', 'unread')})

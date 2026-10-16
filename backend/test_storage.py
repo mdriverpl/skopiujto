@@ -34,7 +34,8 @@ def postgres_schema(monkeypatch):
 
 
 @pytest.fixture
-def app_client(postgres_schema, monkeypatch):
+def app_client(postgres_schema, monkeypatch, tmp_path):
+    monkeypatch.setenv('EDOCUMENTS_MAIL_ATTACHMENTS_DIR', str(tmp_path / 'mail-attachments'))
     main = importlib.import_module('backend.main')
     monkeypatch.setattr(main, 'DATABASE_URL', postgres_schema)
     main.initialize()

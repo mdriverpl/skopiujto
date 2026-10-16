@@ -3,6 +3,7 @@ import { computed, ref, onBeforeUnmount, onMounted, watch } from 'vue'
 import { Bot, Sparkles, ArrowUpRight, ArrowRight, ClipboardCheck, CalendarDays, HardDrive, ListTodo, Mic, Square, X, RefreshCw, StickyNote, FileText } from 'lucide-vue-next'
 import { startSummary } from './startSummary.js'
 import StartMailCard from './StartMailCard.vue'
+import StartWorkCards from './StartWorkCards.vue'
 import StartOrbit from './StartOrbit.vue'
 import { readStartLayout, saveStartLayout } from './startLayout.js'
 const props = defineProps({ user: Object, surveys: Array, taskData: Object, busy: Boolean, api: Function, initialPrompt: String })
@@ -177,10 +178,9 @@ onBeforeUnmount(() => { if (recognition) { recognition.onresult = null; recognit
       <div class="ai-speech"><p class="edzio-remark">{{ dailyGreeting.title }}</p><p>{{ dailyGreeting.description }}</p><p class="edzio-instruction"><Mic :size="14" aria-hidden="true" /> Wciśnij mikrofon i powiedz, co mogę dla Ciebie zrobić.</p></div>
     </div>
     <StartMailCard :api="api" :busy="busy" @open="emit('navigate', 'mail')" />
+    <StartWorkCards :tasks="summary.tasks" :busy="busy" @navigate="emit('navigate', $event)" />
     <div class="shortcuts-heading"><h2>Wszystko pod ręką</h2></div>
     <div class="start-cards quick-cards">
-      <button class="panel start-card calendar-summary" :disabled="busy" @click="emit('navigate', 'calendar')"><div class="summary-top"><span class="summary-icon"><CalendarDays :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Terminarz</h2><p>Twoje zadania w kalendarzu.</p><span class="summary-link">Otwórz kalendarz <ArrowRight :size="14" /></span></button>
-      <button class="panel start-card task-summary" :disabled="busy" @click="emit('navigate', 'tasks')"><div class="summary-top"><span class="summary-icon"><ListTodo :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Zadania ({{ summary.tasks.length }})</h2><p>Sprawdź zadania czekające na wykonanie.</p><span class="summary-link">Otwórz zadania <ArrowRight :size="14" /></span></button>
       <button class="panel start-card drive-summary" :disabled="busy" @click="emit('navigate', 'drive')"><div class="summary-top"><span class="summary-icon"><HardDrive :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Dysk</h2><p>Twoje dokumenty, pliki i katalogi.</p><span class="summary-link">Otwórz dysk <ArrowRight :size="14" /></span></button>
       <button class="panel start-card survey-summary" :disabled="busy" @click="emit('navigate', 'surveys')"><div class="summary-top"><span class="summary-icon"><ClipboardCheck :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Ankieta</h2><p>{{ summary.surveys.length }} ankiet czeka na Twoją odpowiedź.</p><span class="summary-link">Otwórz ankiety <ArrowRight :size="14" /></span></button>
       <button class="panel start-card drive-summary" :disabled="busy" @click="emit('navigate', 'notes')"><div class="summary-top"><span class="summary-icon"><StickyNote :size="23" /></span><ArrowUpRight :size="19" /></div><h2>Notatki</h2><p>Zapisuj pomysły i ustalenia.</p><span class="summary-link">Otwórz notatki <ArrowRight :size="14" /></span></button>

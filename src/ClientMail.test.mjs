@@ -4,13 +4,14 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { computed, ref, watch, reactive, nextTick } from 'vue'
+import { mailSenderKind } from './mailSenderKind.js'
 
 const compiled = compileScript(parse(readFileSync(new URL('./ClientMail.vue', import.meta.url), 'utf8')).descriptor,
   { id: 'mail-test' }).content.replace(/^import .*$/gm, '').replace('export default', 'globalThis.component =')
 function panel(api, overrides = {}, emit = () => {}, fetcher = globalThis.fetch) {
   const mounted = []
-  const context = { computed, ref, watch, onMounted(callback) { mounted.push(callback) }, FormData, fetch: fetcher, MailSettings: {} }
-  for (const icon of ['Inbox', 'Send', 'FileText', 'Archive', 'ShieldAlert', 'Trash2']) context[icon] = {}
+  const context = { mailSenderKind, computed, ref, watch, onMounted(callback) { mounted.push(callback) }, FormData, fetch: fetcher, MailSettings: {} }
+  for (const icon of ['Inbox', 'Send', 'FileText', 'Archive', 'ShieldAlert', 'Trash2', 'Handshake', 'Landmark', 'UserRound', 'Megaphone', 'Bell', 'Ban']) context[icon] = {}
   runInNewContext(compiled, context)
   const state = context.component.setup(reactive({ api, ...overrides }), { expose() {}, emit })
   state.mount = async () => { for (const callback of mounted) await callback() }
@@ -84,6 +85,26 @@ test('refresh receives IMAP mail before reloading the local list', async () => {
   assert.equal(calls.find(([path]) => path === '/client-mail/sync')[1], 'POST')
   assert.equal(state.messages.value[0].id, 'one')
   assert.match(state.notice.value, /1/)
+})
+
+test('time range controls synchronization and limits the mailbox response', async () => {
+  const calls = []
+  const state = panel(async (path, method, body) => {
+    calls.push({ path, method, body })
+    if (path === '/client-mail/settings') return { account: { imap: { enabled: true } } }
+    if (path === '/client-mail/sync') return { imported: 0, skipped: 0, remaining: 0 }
+    return [message]
+  })
+  assert.equal(state.syncHours.value, 24)
+  state.selectedId.value = 'one'
+  await state.changeTimeRange(168)
+  assert.equal(state.syncHours.value, 168)
+  assert.equal(state.selectedId.value, null)
+  assert.equal(calls.find(call => call.path === '/client-mail/sync').body.hours, 168)
+  assert.equal(calls.some(call => call.path === '/client-mail?hours=168'), true)
+  const count = calls.length
+  await state.changeTimeRange(168)
+  assert.equal(calls.length, count)
 })
 
 test('mail search combines independent fields and resets them together', () => {
@@ -187,7 +208,7 @@ test('failed spam blocking keeps the message visible without a success animation
 test('trusted sender cannot trigger spam blocking', async () => {
   const calls = []
   const state = panel(async (...args) => { calls.push(args) })
-  for (const trust of [{ safe: true }, { company: { id: 'company', name: 'Firma' } }]) {
+  for (const trust of [{ safe: true }, { company: { id: 'company', name: 'Firma' } }, { spam_protected: true }]) {
     state.messages.value = [{ ...message, ...trust }]
     state.selectedId.value = message.id
     await state.spamSender()
@@ -200,12 +221,12 @@ test('opening mail scans locally without changing the current folder', async () 
   const calls = []
   const state = panel(async (path, method) => {
     calls.push({ path, method })
-    if (path === '/client-mail/spam-scan') return { moved: 1 }
+    if (path.startsWith('/client-mail/spam-scan?')) return { moved: 1 }
     if (path.endsWith('/settings')) return { account: { imap: { enabled: false } } }
     return [{ ...message, folder: 'spam' }]
   })
   await state.mount()
-  assert.equal(calls[0].path, '/client-mail/spam-scan')
+  assert.equal(calls[0].path, '/client-mail/spam-scan?hours=24')
   assert.equal(calls[0].method, 'POST')
   assert.equal(state.folder.value, 'inbox')
   assert.equal(state.filtered.value.length, 0)
@@ -215,7 +236,7 @@ test('opening mail scans locally without changing the current folder', async () 
 test('message labels save and reload independently for each message', async () => {
   let stored = [{ ...message }, { ...message, id: 'second', label: 'offer' }]
   const api = async (path, method, body) => {
-    if (path === '/client-mail/spam-scan') return { moved: 0 }
+    if (path.startsWith('/client-mail/spam-scan?')) return { moved: 0 }
     if (path.endsWith('/settings')) return { account: { imap: { enabled: false } } }
     if (method === 'PATCH') {
       const id = path.split('/').at(-1)
@@ -258,7 +279,7 @@ test('list label menu updates its own message without opening or marking it as r
 
 test('a scan failure still loads the mailbox and shows the error', async () => {
   const state = panel(async path => {
-    if (path === '/client-mail/spam-scan') throw new Error('Filtr niedostępny')
+    if (path.startsWith('/client-mail/spam-scan?')) throw new Error('Filtr niedostępny')
     if (path.endsWith('/settings')) return { account: { imap: { enabled: false } } }
     return [message]
   })
@@ -293,7 +314,7 @@ test('removing a company unlinks only the selected email and reloads without a s
   assert.equal(calls[0].body.version, 1)
   assert.equal(state.selected.value.company, null)
   assert.equal(state.selected.value.folder, 'inbox')
-  assert.equal(calls.some(call => call.path === '/client-mail/spam-scan'), false)
+  assert.equal(calls.some(call => call.path.startsWith('/client-mail/spam-scan?')), false)
 })
 
 test('category filter combines with search and folder changes clear it', () => {
@@ -399,13 +420,25 @@ test('failure to read an attachment prevents uploading and retains the selection
     if (path === '/access') return { read: true, add: true }
     if (path === '/folders') return []
     uploaded = true
-  }, {}, () => {}, async () => ({ ok: false }))
+  }, {}, () => {}, async () => ({ ok: false, json: async () => ({ detail: 'Nie można odczytać oryginału na IMAP.' }) }))
   state.messages.value = [message]; state.selectedId.value = message.id
   await state.openDriveDialog()
   await state.saveToDrive()
   assert.equal(uploaded, false)
   assert.equal(state.driveDialog.value.chosen.length, 1)
   assert.match(state.driveError.value, /odczytać/)
+  assert.match(state.driveError.value, /IMAP/)
+})
+
+test('spam attachments cannot open drive picker or trigger downloading', async () => {
+  let requested = false
+  const state = panel(async () => { requested = true }, {}, () => {}, async () => { requested = true })
+  state.messages.value = [{ ...message, folder: 'spam', attachments_blocked: true }]
+  state.selectedId.value = message.id
+  await state.download(message.attachments[0])
+  await state.openDriveDialog(message.attachments[0])
+  assert.equal(requested, false)
+  assert.equal(state.driveDialog.value, null)
 })
 
 test('a message opened from the separate report uses its current folder and version', async () => {
@@ -413,7 +446,7 @@ test('a message opened from the separate report uses its current folder and vers
   const current = { ...message, folder: 'archive', version: 7 }
   const state = panel(async (path, method, body) => {
     calls.push({ path, method, body })
-    if (path === '/client-mail') return [current]
+    if (path.startsWith('/client-mail?')) return [current]
     if (path === '/client-mail/settings') return {}
     return { ...current, ...body, version: 8 }
   }, { initialFolder: 'inbox', initialMessageId: 'one' }, (...args) => events.push(args))
@@ -427,7 +460,7 @@ test('a message opened from the separate report uses its current folder and vers
 
 test('opening a removed report message shows an error and consumes the navigation request', async () => {
   const events = []
-  const state = panel(async path => path === '/client-mail' ? [] : {}, { initialMessageId: 'removed' }, (...args) => events.push(args))
+  const state = panel(async path => path.startsWith('/client-mail?') ? [] : {}, { initialMessageId: 'removed' }, (...args) => events.push(args))
   await state.mount()
   assert.match(state.error.value, /nie jest już dostępna/)
   assert.deepEqual(events.at(-1), ['message-opened'])
