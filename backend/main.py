@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
 from backend import storage, access, admin, images, mailing, workflow, richtext, ai, document_fields, ai_files, saved_data, tasks, dictionaries, dictionary_excel, ai_commands, surveys, audit
 from backend import database, api_tokens, assistant, notes, client_mail, mail_settings, mail_daily, edelivery, edelivery_connection, companies, impersonation
+from backend import message_center
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / '.env')
@@ -79,6 +80,7 @@ def initialize():
         dictionaries.initialize(c)
         c.executescript(client_mail.mail_rules.SCHEMA)
         c.executescript(ai_commands.SCHEMA)
+        c.executescript(message_center.SCHEMA)
         c.executescript(surveys.SCHEMA)
         if 'scoring_profile' not in c.columns('surveys'):
             c.execute("ALTER TABLE surveys ADD COLUMN scoring_profile TEXT NOT NULL DEFAULT ''")
@@ -188,6 +190,7 @@ admin.install(app, db, user, password_hash)
 companies.install(app, db, user)
 api_tokens.install(app, db, user)
 impersonation.install(app, db, user, digest, SECURE_COOKIE)
+message_center.install(app, db, user)
 
 class Credentials(BaseModel):
     name: str = Field(min_length=2, max_length=80)
@@ -255,7 +258,7 @@ def me(request: Request, response: Response, current=Depends(user)):
 
 class MenuOrderInput(BaseModel):
     menu_order: list[Literal['start', 'ai', 'mail', 'edelivery', 'tasks', 'calendar', 'notes', 'documents',
-                             'surveys', 'drive', 'templates', 'dictionaries', 'companies', 'help', 'admin']] = Field(max_length=15)
+                             'surveys', 'drive', 'templates', 'dictionaries', 'companies', 'help', 'admin', 'planning', 'settings']] = Field(max_length=17)
 
     @field_validator('menu_order')
     @classmethod
@@ -536,6 +539,45 @@ def update_document(doc_id: str, body: DocumentInput, current=Depends(user)):
 class WorkflowInput(BaseModel):
     status: workflow.DocumentStatus
     version: int = Field(strict=True, ge=1)
+
+class DocumentMoveInput(BaseModel):
+    folder_id: str | None
+    version: int = Field(strict=True, ge=1)
+
+@app.patch('/api/documents/{doc_id}/move')
+def move_document(doc_id: str, body: DocumentMoveInput, current=Depends(user)):
+    with db() as c:
+        c.begin_write()
+        row = owned(c, doc_id, current)
+        if not access.document_permissions(c, current, row)['move']:
+            raise HTTPException(403, 'Brak uprawnienia do przenoszenia tego pliku.')
+        owned_folder(c, body.folder_id, current, 'add')
+        if body.version != row['version']:
+            raise HTTPException(409, 'Dokument został zmieniony. Odśwież listę i spróbuj ponownie.')
+        if row['folder_id'] != body.folder_id:
+            # Moving changes location only; file versions and their approvals remain valid.
+            c.execute('UPDATE documents SET folder_id=?,updated_at=? WHERE id=?', (body.folder_id, now(), doc_id))
+            audit.updated(c, current, 'document', row, ['folder_id'], action='Przeniesiono dokument')
+            for folder_id, action in ((row['folder_id'], 'Przeniesiono z katalogu: '), (body.folder_id, 'Przeniesiono do katalogu: ')):
+                if folder_id:
+                    folder = c.execute('SELECT * FROM folders WHERE id=?', (folder_id,)).fetchone()
+                    audit.record(c, current, 'folder', folder, action + row['title'], [audit.change('document_id', None, doc_id)])
+    return get_document(doc_id, current)
+
+@app.get('/api/documents/{doc_id}/pdf')
+def download_document_pdf(doc_id: str, current=Depends(user)):
+    from backend.document_pdf import render_pdf
+    from urllib.parse import quote
+    with db() as c:
+        row = owned(c, doc_id, current)
+        if row['filename']:
+            if Path(row['filename']).suffix.lower() != '.pdf':
+                raise HTTPException(415, 'Eksport PDF jest dostępny dla dokumentów utworzonych w edytorze.')
+            return file_response(row)
+        result = document(row)
+    filename = result['title'].replace('/', '_').replace('\\', '_') + '.pdf'
+    return Response(render_pdf(result), media_type='application/pdf', headers={
+        'Content-Disposition': "attachment; filename*=UTF-8''" + quote(filename, safe=''), 'Cache-Control': 'no-store'})
 
 @app.patch('/api/documents/{doc_id}/status')
 def change_document_status(doc_id: str, body: WorkflowInput, current=Depends(user)):

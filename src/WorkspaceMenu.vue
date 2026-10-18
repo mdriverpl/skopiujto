@@ -1,39 +1,73 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { House, Mail, Sparkles, Inbox, Send, ShieldAlert, Trash2, Archive, ChevronDown, ClipboardList, CalendarDays, StickyNote, Files, ClipboardCheck, HardDrive, FileText, BookOpen, Users, X } from 'lucide-vue-next'
+import { House, Mail, Sparkles, Inbox, Send, ShieldAlert, Trash2, Archive, ChevronDown, ClipboardList, CalendarDays, StickyNote, Files, ClipboardCheck, FileText, BookOpen, Users, Settings, X } from 'lucide-vue-next'
 import { defaultMenuOrder, normalizeMenuOrder, moveMenuItem } from './menuOrder.js'
 
-const props = defineProps({ user: Object, api: Function, view: String, open: Boolean, tasksWaiting: Number, activeSurveys: Number, mailFolder: String })
-const emit = defineEmits(['navigate', 'mail-folder', 'close', 'order-saved'])
+const props = defineProps({ user: Object, api: Function, view: String, open: Boolean, tasksWaiting: Number, activeSurveys: Number, mailFolder: String, dictionaryId: String, dictionaryRevision: Number })
+const emit = defineEmits(['navigate', 'mail-folder', 'dictionary', 'close', 'order-saved'])
 const mailExpanded = ref(false)
+const expandedGroups = ref({ planning: false, documents: false, dictionaries: false, settings: false })
+const dictionaryList = ref([]), dictionaryError = ref(''), dictionariesLoading = ref(false)
+let dictionaryRequest = 0
+async function loadDictionaries() {
+  const request = ++dictionaryRequest
+  dictionaryError.value = ''
+  if (!props.user?.id) { dictionaryList.value = []; dictionariesLoading.value = false; return }
+  dictionariesLoading.value = true
+  try {
+    const list = await props.api('/dictionaries')
+    if (request === dictionaryRequest && !disposed) dictionaryList.value = list
+  } catch {
+    if (request === dictionaryRequest && !disposed) dictionaryError.value = 'Nie udało się wczytać słowników.'
+  } finally {
+    if (request === dictionaryRequest && !disposed) dictionariesLoading.value = false
+  }
+}
+const groups = {
+  mail: ['mail', 'edelivery'], planning: ['calendar', 'tasks', 'notes'],
+  documents: ['documents', 'surveys', 'templates', 'active', 'drive'], dictionaries: ['dictionaries'], settings: ['admin', 'mail-settings', 'edelivery-settings']
+}
+const children = {
+  planning: [{ id: 'calendar', label: 'Terminarz', icon: CalendarDays }, { id: 'tasks', label: 'Zadania', icon: ClipboardList }, { id: 'notes', label: 'Notatki', icon: StickyNote }],
+  documents: [{ id: 'documents', label: 'Dokumenty', icon: Files }, { id: 'surveys', label: 'Ankiety', icon: ClipboardCheck }, { id: 'templates', label: 'Szablony', icon: FileText }],
+  settings: [{ id: 'admin', label: 'Użytkownicy i grupy', icon: Users }, { id: 'mail-settings', label: 'Ustawienia poczty', icon: Mail }, { id: 'edelivery-settings', label: 'Ustawienia eDoręczeń', icon: Mail }]
+}
+const canManageUsers = computed(() => props.user?.role === 'admin' && !props.user?.impersonation)
+const visibleChildren = id => children[id]?.filter(item => item.id !== 'admin' || canManageUsers.value) || []
+const isExpanded = id => id === 'mail' ? mailExpanded.value : expandedGroups.value[id]
 const mailFolders = [
   { id: 'analysis', label: 'Analiza AI', icon: Sparkles },
-  { id: 'inbox', label: 'Wiadomości odebrane', icon: Inbox },
+  { id: 'inbox', label: 'Odebrana', icon: Inbox },
   { id: 'sent', label: 'Wysłane', icon: Send },
   { id: 'drafts', label: 'Robocze', icon: FileText },
   { id: 'spam', label: 'Spam', icon: ShieldAlert },
   { id: 'trash', label: 'Śmieci', icon: Trash2 },
   { id: 'archive', label: 'Archiwum', icon: Archive }
 ]
-watch(() => props.view, view => { if (view === 'mail') mailExpanded.value = true }, { immediate: true })
+watch(() => props.view, view => {
+  for (const [id, views] of Object.entries(groups)) {
+    if (!views.includes(view)) continue
+    if (id === 'mail') mailExpanded.value = true
+    else expandedGroups.value[id] = true
+  }
+}, { immediate: true })
 const menu = ref(null), order = ref([...defaultMenuOrder]), dragged = ref(null), announcement = ref('')
 let gesture = null, suppressClick = false
 const saving = ref(false), saveError = ref('')
 let disposed = false
 const definitions = {
-  start: { label: 'Start', icon: House }, ai: { label: 'Wiadomości', icon: Mail },
-  mail: { label: 'Poczta', icon: Mail },
+  start: { label: 'Start', icon: House },
+  mail: { label: 'Centrum wiadomości', icon: Mail },
+  planning: { label: 'Planowanie', icon: CalendarDays },
   edelivery: { label: 'eDor\u0119czenia', icon: Mail },
   tasks: { label: 'Zadania', icon: ClipboardList }, calendar: { label: 'Terminarz', icon: CalendarDays },
   notes: { label: 'Notatki', icon: StickyNote }, documents: { label: 'Dokumenty', icon: Files },
-  surveys: { label: 'Ankiety', icon: ClipboardCheck }, drive: { label: 'Mój dysk', icon: HardDrive },
+  surveys: { label: 'Ankiety', icon: ClipboardCheck },
   templates: { label: 'Szablony', icon: FileText }, dictionaries: { label: 'Słowniki', icon: BookOpen },
-  companies: { label: 'Katalog firm', icon: Users },
-  help: { label: 'Pomoc', icon: BookOpen }, admin: { label: 'Użytkownicy i grupy', icon: Users }
+  help: { label: 'Pomoc', icon: BookOpen }, settings: { label: 'Ustawienia', icon: Settings }
 }
-const items = computed(() => order.value.filter(id => (id !== 'admin' || (props.user?.role === 'admin' && !props.user?.impersonation)) && (id !== 'companies' || props.user?.is_superadmin))
-  .map(id => ({ id, ...definitions[id] })))
-const active = id => props.view === id || (id === 'drive' && props.view === 'active')
+const items = computed(() => order.value.map(id => ({ id, ...definitions[id] })))
+const active = id => groups[id]?.includes(props.view) || props.view === id
 async function saveOrder() {
   if (saving.value || !props.user?.id) return
   const accountId = props.user.id
@@ -63,15 +97,30 @@ watch(() => props.user?.id, () => {
     } catch {}
   }
 }, { immediate: true })
+watch(() => [props.user?.id, props.dictionaryRevision], (value, previous) => {
+  if (value[0] !== previous?.[0]) dictionaryList.value = []
+  loadDictionaries()
+}, { immediate: true })
 
 function select(id, event) {
   if (suppressClick || event.ctrlKey) { suppressClick = false; return }
-  if (id === 'mail') {
-    mailExpanded.value = !mailExpanded.value
-    if (mailExpanded.value && props.view !== 'mail') emit('navigate', 'mail')
+  if (groups[id]) {
+    if (id === 'mail') mailExpanded.value = !mailExpanded.value
+    else expandedGroups.value[id] = !expandedGroups.value[id]
+    if (id === 'dictionaries' && expandedGroups.value[id] && !dictionariesLoading.value) loadDictionaries()
     return
   }
   emit('navigate', id)
+  emit('close')
+}
+function selectChild(id, event) {
+  if (suppressClick || event.ctrlKey) { suppressClick = false; return }
+  emit('navigate', id)
+  emit('close')
+}
+function selectDictionary(id, event) {
+  if (suppressClick || event.ctrlKey) { suppressClick = false; return }
+  emit('dictionary', id)
   emit('close')
 }
 function selectMailFolder(id, event) {
@@ -134,21 +183,31 @@ function keyMove(id, event) {
   saveOrder()
 }
 watch(() => props.open, () => cancelDrag())
-onBeforeUnmount(() => { disposed = true; cancelDrag() })
+onBeforeUnmount(() => { disposed = true; dictionaryRequest++; cancelDrag() })
 </script>
 
 <template>
   <nav ref="menu" id="workspace-menu" class="workspace-sidebar" :class="{ open, 'menu-reordering': dragged }" aria-label="Przestrzeń robocza" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="cancelDrag" @lostpointercapture="cancelDrag" @keydown.esc="cancelDrag">
-    <div class="sidebar-heading"><span class="eyebrow">Menu</span><button class="icon-button sidebar-close" aria-label="Zamknij menu" @click="emit('close')"><X :size="20" /></button></div>
-    <p class="menu-reorder-hint">Ctrl + przeciągnięcie zmienia kolejność</p>
+    <div class="sidebar-heading"><button class="icon-button sidebar-close" aria-label="Zamknij menu" @click="emit('close')"><X :size="20" /></button></div>
     <p v-if="saving" class="menu-reorder-hint" role="status">Zapisywanie kolejności…</p>
     <div v-if="saveError" class="menu-save-error" role="alert"><p>{{ saveError }}</p><button @click="saveOrder">Spróbuj ponownie</button></div>
     <template v-for="item in items" :key="item.id">
-      <button :data-menu-id="item.id" :class="{ active: active(item.id), 'menu-dragged': dragged === item.id }" :aria-current="active(item.id) && item.id !== 'mail' ? 'page' : undefined" :aria-expanded="item.id === 'mail' ? mailExpanded : undefined" :aria-controls="item.id === 'mail' ? 'mail-folder-menu' : undefined" :title="item.id === 'mail' ? (mailExpanded ? 'Zwiń foldery poczty' : 'Rozwiń foldery poczty') : `${item.label} — Ctrl + przeciągnięcie lub Ctrl + strzałki zmienia kolejność`" @pointerdown="pointerDown(item.id, $event)" @click="select(item.id, $event)" @keydown="keyMove(item.id, $event)">
-        <component :is="item.icon" :size="18" /> {{ item.label }}<span v-if="item.id === 'tasks' && tasksWaiting">({{ tasksWaiting }})</span><span v-if="item.id === 'surveys'">({{ activeSurveys }})</span><ChevronDown v-if="item.id === 'mail'" class="mail-menu-chevron" :class="{ expanded: mailExpanded }" :size="16" />
+      <button :data-menu-id="item.id" :class="{ active: active(item.id), 'menu-dragged': dragged === item.id }" :aria-current="active(item.id) && !groups[item.id] ? 'page' : undefined" :aria-expanded="groups[item.id] ? isExpanded(item.id) : undefined" :aria-controls="groups[item.id] ? `${item.id}-submenu` : undefined" :title="groups[item.id] ? `${isExpanded(item.id) ? 'Zwiń' : 'Rozwiń'}: ${item.label}` : `${item.label} — Ctrl + przeciągnięcie lub Ctrl + strzałki zmienia kolejność`" @pointerdown="pointerDown(item.id, $event)" @click="select(item.id, $event)" @keydown="keyMove(item.id, $event)">
+        <component :is="item.icon" :size="18" /><span class="menu-item-label">{{ item.label }}</span><ChevronDown v-if="groups[item.id]" class="mail-menu-chevron" :class="{ expanded: isExpanded(item.id) }" :size="16" />
       </button>
-      <div v-if="item.id === 'mail'" v-show="mailExpanded" id="mail-folder-menu" class="mail-folder-menu" role="group" aria-label="Foldery poczty">
+      <div v-if="item.id === 'mail'" v-show="mailExpanded" id="mail-submenu" class="mail-folder-menu" role="group" aria-label="Centrum wiadomości">
         <button v-for="item in mailFolders" :key="item.id" :class="{ active: view === 'mail' && mailFolder === item.id }" :aria-current="view === 'mail' && mailFolder === item.id ? 'page' : undefined" :title="`Otwórz folder: ${item.label}`" @click="selectMailFolder(item.id, $event)"><component :is="item.icon" :size="16" />{{ item.label }}</button>
+        <button :class="{ active: view === 'edelivery' }" :aria-current="view === 'edelivery' ? 'page' : undefined" @click="selectChild('edelivery', $event)"><Mail :size="16" />eDoręczenia</button>
+      </div>
+      <div v-else-if="children[item.id]" v-show="isExpanded(item.id)" :id="`${item.id}-submenu`" class="mail-folder-menu" role="group" :aria-label="item.label">
+        <button v-for="child in visibleChildren(item.id)" :key="child.id" :class="{ active: view === child.id }" :aria-current="view === child.id ? 'page' : undefined" @click="selectChild(child.id, $event)"><component :is="child.icon" :size="16" />{{ child.label }}<span v-if="child.id === 'tasks' && tasksWaiting">({{ tasksWaiting }})</span><span v-if="child.id === 'surveys'">({{ activeSurveys }})</span></button>
+      </div>
+      <div v-else-if="item.id === 'dictionaries'" v-show="isExpanded(item.id)" id="dictionaries-submenu" class="mail-folder-menu" role="group" aria-label="Słowniki">
+        <button :class="{ active: view === 'dictionaries' && !dictionaryId }" :aria-current="view === 'dictionaries' && !dictionaryId ? 'page' : undefined" @click="selectDictionary(null, $event)"><BookOpen :size="16" />Wszystkie słowniki</button>
+        <button :class="{ active: view === 'dictionaries' && dictionaryId === 'ai' }" :aria-current="view === 'dictionaries' && dictionaryId === 'ai' ? 'page' : undefined" @click="selectDictionary('ai', $event)"><Sparkles :size="16" />AI</button>
+        <button v-for="dictionary in dictionaryList" :key="dictionary.id" :class="{ active: view === 'dictionaries' && dictionaryId === dictionary.id }" :aria-current="view === 'dictionaries' && dictionaryId === dictionary.id ? 'page' : undefined" @click="selectDictionary(dictionary.id, $event)"><BookOpen :size="16" />{{ dictionary.name }}</button>
+        <p v-if="dictionariesLoading" class="submenu-notice" role="status">Wczytywanie słowników…</p>
+        <div v-if="dictionaryError" class="submenu-notice" role="alert"><p>{{ dictionaryError }}</p><button @click="loadDictionaries">Spróbuj ponownie</button></div>
       </div>
     </template>
     <span class="menu-announcement" role="status" aria-live="polite">{{ announcement }}</span>
@@ -156,6 +215,9 @@ onBeforeUnmount(() => { disposed = true; cancelDrag() })
 </template>
 
 <style scoped>
+.menu-item-label { min-width:0; text-align:left; line-height:1.45; }
+.sidebar-heading { display:none; }
+@media(max-width:1000px) { .sidebar-heading { display:flex; justify-content:flex-end; padding-bottom:0; } }
 .menu-reorder-hint { font-size:10px; line-height:1.5; color:var(--muted); padding:0 14px; margin:-8px 0 8px; }
 .menu-reordering { user-select:none; cursor:grabbing; }
 .menu-reordering > button { cursor:grabbing; }
@@ -167,4 +229,6 @@ onBeforeUnmount(() => { disposed = true; cancelDrag() })
 .mail-folder-menu { display:grid; gap:3px; margin:-3px 0 4px 21px; padding-left:9px; border-left:1px solid var(--border); }
 .mail-folder-menu button { width:100%; justify-content:flex-start; text-align:left; gap:9px; padding:10px 8px; border:0; background:transparent; color:var(--secondary); font-size:11px; }
 .mail-folder-menu button svg { flex-shrink:0; }.mail-folder-menu button:hover { color:var(--accent); background:var(--surface-soft); }.mail-folder-menu button.active { color:var(--accent); background:var(--accent-soft); font-weight:600; }
+.mail-folder-menu button { overflow-wrap:anywhere; min-width:0; }
+.submenu-notice { color:var(--muted); font-size:11px; padding:0 8px; }
 </style>

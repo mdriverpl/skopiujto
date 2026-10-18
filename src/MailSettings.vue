@@ -1,13 +1,23 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { X, Save, Server, Mail, CheckCircle2, Eye, EyeOff } from 'lucide-vue-next'
+import { Save, Server, CheckCircle2, Eye, EyeOff } from 'lucide-vue-next'
 const props = defineProps({ api: Function, initial: Object })
 const emit = defineEmits(['saved', 'close'])
-const dialog = ref(null), busy = ref(false), error = ref(''), notice = ref(''), visible = ref({ smtp: false, imap: false })
+const busy = ref(false), loading = ref(false), loaded = ref(!!props.initial), error = ref(''), notice = ref(''), visible = ref({ smtp: false, imap: false })
 const transport = (port, value = {}) => ({ enabled: false, host: '', port, security: 'ssl', username: '', ...value, password: '', clear_password: false })
 const initial = props.initial?.account || {}
 const form = ref({ email: initial.email || '', sender_name: initial.sender_name || '', version: initial.version || 0,
   smtp: transport(465, initial.smtp), imap: transport(993, initial.imap) })
+async function load() {
+  if (loading.value) return
+  loading.value = true; error.value = ''
+  try {
+    const saved = await props.api('/client-mail/settings')
+    form.value = { ...saved.account, smtp: transport(465, saved.account.smtp), imap: transport(993, saved.account.imap) }
+    loaded.value = true
+  } catch (err) { error.value = err.message }
+  finally { loading.value = false }
+}
 async function persist() {
   const body = { email: form.value.email, sender_name: form.value.sender_name, version: form.value.version }
   for (const name of ['smtp', 'imap']) {
@@ -19,7 +29,7 @@ async function persist() {
   emit('saved', saved)
 }
 async function save(test = null) {
-  if (busy.value) return
+  if (busy.value || loading.value || !loaded.value) return
   busy.value = true; error.value = ''; notice.value = ''
   try {
     await persist()
@@ -35,15 +45,17 @@ function securityChanged(name) {
   form.value[name].port = name === 'smtp' ? (form.value[name].security === 'ssl' ? 465 : 587) : (form.value[name].security === 'ssl' ? 993 : 143)
 }
 function close() { if (!busy.value) { form.value.smtp.password = ''; form.value.imap.password = ''; emit('close') } }
-onMounted(() => dialog.value.showModal())
+onMounted(() => { if (!props.initial) return load() })
 </script>
 
 <template>
-  <dialog ref="dialog" class="mail-settings-dialog" aria-labelledby="mail-settings-title" @cancel.prevent="close">
-    <form @submit.prevent="save()">
-      <header><div><span class="settings-eyebrow">Twoje konto</span><h2 id="mail-settings-title"><Mail :size="22" /> Ustawienia poczty</h2></div><button type="button" class="settings-icon" :disabled="busy" aria-label="Zamknij ustawienia" @click="close" title="Zamknij ustawienia"><X :size="20" /></button></header>
-      <p class="settings-intro">Wpisz dane otrzymane od dostawcy poczty. Ustawienia dotyczą tylko Twojego konta.</p>
+  <section class="mail-settings-page" aria-labelledby="mail-settings-title" :aria-busy="loading">
+    <Teleport to="#workspace-title"><div><h1 id="mail-settings-title">Ustawienia poczty</h1><p class="settings-intro">Wpisz dane otrzymane od dostawcy poczty. Ustawienia dotyczą tylko Twojego konta.</p></div></Teleport>
+    <div class="panel mail-settings-panel">
       <p v-if="error" class="settings-error" role="alert">{{ error }}</p><p v-if="notice" class="settings-success" role="status"><CheckCircle2 :size="17" /> {{ notice }}</p>
+      <p v-if="loading" class="settings-intro" role="status">Wczytywanie ustawień poczty…</p>
+      <button v-if="!loaded && !loading" type="button" @click="load">Spróbuj ponownie</button>
+    <form v-if="loaded" @submit.prevent="save()">
       <fieldset :disabled="busy" class="account-fields"><legend>Dane nadawcy</legend><label>Adres e-mail<input v-model="form.email" type="email" maxlength="254" autocomplete="email" placeholder="jan@firma.pl" :required="form.smtp.enabled || form.imap.enabled" /></label><label>Nazwa nadawcy<input v-model="form.sender_name" maxlength="150" autocomplete="name" placeholder="Jan Kowalski" /></label></fieldset>
       <div class="server-grid">
         <fieldset v-for="name in ['smtp', 'imap']" :key="name" :disabled="busy" class="server-fields"><legend><Server :size="17" /> {{ name === 'smtp' ? 'Wysyłanie — SMTP' : 'Odbieranie — IMAP' }}</legend>
@@ -58,18 +70,20 @@ onMounted(() => dialog.value.showModal())
         </fieldset>
       </div>
       <p class="field-help">Hasła są szyfrowane na serwerze. Zapisane hasło nie jest ponownie wyświetlane. Test połączenia nie wysyła wiadomości.</p>
-      <footer><button type="button" :disabled="busy" @click="close">Zamknij</button><button class="primary" :disabled="busy"><Save :size="17" /> {{ busy ? 'Zapisywanie…' : 'Zapisz ustawienia' }}</button></footer>
+      <footer><button type="button" :disabled="busy" @click="close">Przejdź do poczty</button><button class="primary" :disabled="busy"><Save :size="17" /> {{ busy ? 'Zapisywanie…' : 'Zapisz ustawienia' }}</button></footer>
     </form>
-  </dialog>
+    </div>
+  </section>
 </template>
 
 <style scoped>
-.mail-settings-dialog { width:min(780px,calc(100vw - 28px)); max-height:90dvh; padding:28px; border:1px solid var(--border); border-radius:20px; background:var(--surface); color:var(--text); box-shadow:0 25px 80px #0003; }
-.mail-settings-dialog::backdrop { background:#13213966; backdrop-filter:blur(5px); }
+.mail-settings-page { width:100%; max-width:1100px; }
+.mail-settings-panel { padding:28px; display:grid; gap:18px; }
+h1 { font-size:24px; margin:0 0 8px; }
 form { gap:18px; }header,footer { display:flex; align-items:center; justify-content:space-between; gap:15px; }h2 { display:flex; gap:10px; align-items:center; margin:7px 0 0; font-size:22px; }h2 svg { color:#086cff; }.settings-eyebrow { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:1.5px; }
 .settings-intro { color:var(--secondary); font-size:12px; line-height:1.7; margin:0; }.settings-icon { border:0; background:transparent; padding:7px; flex-shrink:0; color:var(--secondary); }
 fieldset { border:1px solid var(--border); border-radius:13px; padding:18px; margin:0; min-width:0; }legend { padding:0 7px; font-size:12px; font-weight:600; }legend svg { vertical-align:middle; margin-right:5px; color:#086cff; }
 .account-fields,.server-grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }.server-fields { display:flex; flex-direction:column; gap:14px; background:var(--surface-soft); }
 label { font-size:12px; gap:7px; }input,select { font-size:12px; padding:10px; } .port-security { display:grid; grid-template-columns:90px 1fr; gap:12px; }.checkbox-label { flex-direction:row; align-items:center; gap:9px; font-size:11px; line-height:1.5; }.checkbox-label input { width:15px; height:15px; flex-shrink:0; accent-color:#086cff; }.password-field { display:flex; align-items:center; border:1px solid var(--border); background:var(--surface); border-radius:8px; }.password-field input { border:0; flex:1; width:0; }.field-help { font-size:10px; line-height:1.7; color:var(--muted); margin:0; }.connection-button { font-size:11px; padding:10px; margin-top:auto; color:#086cff; background:var(--surface); }.settings-error,.settings-success { padding:12px; border-radius:9px; margin:0; font-size:12px; line-height:1.6; }.settings-error { color:var(--theme-danger,#ba253b); background:color-mix(in srgb,#ff637d 10%,var(--surface)); }.settings-success { display:flex; align-items:center; gap:8px; background:var(--success-soft); color:var(--success); }footer { justify-content:flex-end; }footer button { font-size:12px; }
-@media(max-width:600px) { .mail-settings-dialog { padding:20px; max-height:94dvh; }.account-fields,.server-grid { grid-template-columns:1fr; }.settings-intro { font-size:11px; }h2 { font-size:19px; } }
+@media(max-width:600px) { .mail-settings-panel { padding:18px; }.account-fields,.server-grid { grid-template-columns:1fr; }.settings-intro { font-size:11px; }footer { flex-wrap:wrap; } }
 </style>

@@ -32,6 +32,75 @@ def employee(client, email='anna@example.com'):
         'values': {'Imię': 'Anna', 'Nazwisko': 'Kowalska', 'Stanowisko': 'Prawnik', 'Email': email, 'Telefon': '+48600123456'}}).json()
     return dictionary, entry
 
+
+def test_dictionary_email_uses_personal_smtp_and_enforces_selected_dictionary(app_client, monkeypatch, transport):
+    from cryptography.fernet import Fernet
+    from backend.test_mail_settings import account
+    monkeypatch.setenv('EDOCUMENTS_MAIL_SETTINGS_KEY', Fernet.generate_key().decode())
+    main, client = app_client
+    saved = client.put('/api/client-mail/settings', json=account())
+    assert saved.status_code == 200, saved.text
+    dictionary, entry = employee(client)
+    other = client.post('/api/dictionaries', json={'name': 'Other contacts', 'fields': ['Email']}).json()
+    contact = client.post('/api/dictionaries/' + other['id'] + '/entries', json={'values': {'Email': 'other@example.com'}}).json()
+    options = client.get('/api/ai/commands/options').json()
+    assert options['channels']['email']['configured'] is True
+    assert options['channels']['email']['source'] == 'personal'
+    body = {'subject': 'Notice', 'message': 'Details', 'channel': 'email', 'source': 'dictionaries',
+            'dictionary_id': dictionary['id'], 'recipients': ['d:' + entry['id']]}
+    assert client.post('/api/messages/prepare', json={**body, 'recipients': ['d:' + contact['id']]}).status_code == 422
+    prepared = client.post('/api/messages/prepare', json=body)
+    assert prepared.status_code == 200, prepared.text
+    sent = execute(client, prepared.json())
+    assert sent.status_code == 200, sent.text
+    email = transport[-1][1]
+    assert email[0]['sender'] == 'jan@example.com' and email[0]['host'] == 'smtp.example.com'
+    assert email[1] == 'anna@example.com' and email[2] == 'Jan Kowalski'
+
+
+def test_direct_email_without_dictionary_is_validated_and_sent_once(app_client, transport):
+    main, client = app_client
+    body = {'subject': 'Notice', 'message': 'Message body', 'channel': 'email', 'source': 'dictionaries',
+            'recipients': [], 'direct_email': 'new-client@example.com'}
+    response = client.post('/api/messages/prepare', json=body)
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    assert len(plan['recipients']) == 1 and plan['recipients'][0]['address'] == body['direct_email']
+    assert execute(client, plan).status_code == 200
+    assert transport[0][1][1] == body['direct_email']
+    assert execute(client, plan).status_code == 409
+    for invalid in ({'direct_email': 'invalid'}, {'direct_email': None}, {'channel': 'sms'}):
+        assert client.post('/api/messages/prepare', json={**body, **invalid}).status_code == 422
+
+
+def test_history_contacts_are_private_exclude_spam_and_can_be_selected(app_client, transport):
+    main, client = app_client
+    owner = client.get('/api/me').json()
+    reader = create_reader(client)
+    with main.db() as con:
+        for identifier, user_id, folder, category, sender in [
+            ('history', owner['id'], 'inbox', '', 'client@example.com'),
+            ('duplicate', owner['id'], 'archive', '', 'client@example.com'),
+            ('spam-history', owner['id'], 'spam', '', 'spam@example.com'),
+            ('classified-history', owner['id'], 'inbox', 'spam', 'classified@example.com'),
+            ('private-history', reader['id'], 'inbox', '', 'private@example.com')]:
+            con.execute('''INSERT INTO client_mail(id,user_id,sender_name,sender_email,recipient,subject,content,folder,category,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)''', (identifier,user_id,'Client',sender,'me@example.com','History','Text',folder,category,'2026-10-17T10:00:00Z'))
+        con.execute('INSERT INTO user_messages(id,sender_id,recipient_id,subject,message,created_at) VALUES(?,?,?,?,?,?)',
+                    ('history-portal',owner['id'],reader['id'],'Portal','Text','2026-10-17T10:00:00Z'))
+    response = client.get('/api/messages/contacts?source=history')
+    assert response.status_code == 200, response.text
+    rows = response.json()
+    emails = [row for row in rows if 'email' in row['channels']]
+    assert len(emails) == 1 and emails[0]['channels']['email'] == 'client@example.com'
+    assert any(row['channels'].get('user') == reader['id'] for row in rows)
+    plan = client.post('/api/messages/prepare', json={'subject':'Reply','message':'Details','channel':'email',
+        'source':'history','recipients':[emails[0]['id']]}).json()
+    assert execute(client, plan).status_code == 200
+    login(client, READER)
+    private_rows = client.get('/api/messages/contacts?source=history').json()
+    assert not any(row['channels'].get('email') == 'client@example.com' for row in private_rows)
+
 def test_manual_message_without_ai_and_actual_send_date(app_client, monkeypatch, transport):
     main, client = app_client
     reader = create_reader(client)
@@ -152,6 +221,20 @@ def test_provider_schema_uses_current_model_and_excludes_contact_addresses(app_c
     assert request['text']['format']['strict'] is True
     assert 'anna@example.com' not in request['input'] and '+48600123456' not in request['input']
     assert 'Prawnik' in request['input']
+
+def test_manual_sms_accepts_phone_validates_source_and_executes_once(app_client, transport):
+    _, client = app_client
+    body = {'subject': 'Reminder', 'message': 'Tomorrow', 'channel': 'sms', 'source': 'dictionaries', 'direct_sms': '+48600123456'}
+    assert client.post('/api/messages/prepare', json={**body, 'channel': 'email'}).status_code == 422
+    assert client.post('/api/messages/prepare', json={**body, 'direct_sms': 'invalid'}).status_code == 422
+    response = client.post('/api/messages/prepare', json=body)
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    assert plan['recipients'][0]['address'] == '+48600123456'
+    assert execute(client, plan).json()['recipients'][0]['status'] == 'sent'
+    assert execute(client, plan).status_code == 409
+    assert len(transport) == 1 and transport[0][0] == 'sms'
+
 
 def test_plain_message_smtp_format_and_refusal_without_network(monkeypatch):
     mails = []

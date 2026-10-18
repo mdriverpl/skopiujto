@@ -56,6 +56,8 @@ def document_permissions(con, current, row):
         rights['edit'] = False
     # A file can only be deleted or replaced by its uploader, even by an admin.
     uploader = row['uploaded_by'] or row['user_id']
+    rights['move'] = bool(rights['read'] and rights['delete'] and row['user_id'] == current['id'] and
+                          (not row['filename'] or uploader == current['id']))
     if row['filename'] and uploader != current['id']:
         rights['delete'] = False
     return rights

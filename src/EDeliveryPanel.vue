@@ -1,11 +1,11 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { Mail, ExternalLink, Plus, Search, RefreshCw, Pencil, Trash2, Save, X, Settings } from 'lucide-vue-next'
-import EDeliverySettings from './EDeliverySettings.vue'
 const props = defineProps({ api: Function })
+const emit = defineEmits(['open-settings'])
 const records = ref([]), search = ref(''), direction = ref('all'), status = ref('all')
 const draft = ref(null), busy = ref(false), loaded = ref(false), error = ref('')
-const connection = ref(null), settingsOpen = ref(false), notice = ref('')
+const connection = ref(null), notice = ref('')
 const statuses = { registered: 'Zarejestrowana', sent: 'Wysłana', delivered: 'Doręczona', received: 'Odebrana', failed: 'Nieudana' }
 const directions = { incoming: 'Przychodząca', outgoing: 'Wychodząca' }
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
@@ -20,7 +20,6 @@ async function run(action) {
   finally { busy.value = false }
 }
 async function load() { records.value = await props.api('/edeliveries'); loaded.value = true; connection.value = await props.api('/edeliveries/connection') }
-function settingsSaved(value) { connection.value = value }
 async function sync() { await run(async () => { const result = await props.api('/edeliveries/sync', 'POST'); notice.value = result.message; if (result.more) notice.value += ' Skrzynka zawiera także starsze przesyłki poza zakresem synchronizacji.'; await load() }) }
 function edit(item) {
   if (busy.value) return
@@ -52,15 +51,14 @@ onMounted(() => run(load))
     <nav class="page-menu" aria-label="Menu eDoręczeń">
       <button class="primary" :disabled="busy" @click="edit()"><Plus :size="17" /> Dodaj przesyłkę</button>
       <button :disabled="busy" aria-label="Odśwież rejestr przesyłek" @click="run(load)"><RefreshCw :size="17" /> Odśwież</button>
-      <button :disabled="busy" @click="settingsOpen = true"><Settings :size="17" /> Konfiguracja skrzynki</button>
+      <button :disabled="busy" @click="emit('open-settings')"><Settings :size="17" /> Ustawienia eDoręczeń</button>
       <button :disabled="busy || !connection?.enabled" @click="sync"><RefreshCw :size="17" /> Synchronizuj skrzynkę</button>
       <select v-model="direction" aria-label="Kierunek przesyłki"><option value="all">Oba kierunki</option><option v-for="(label, key) in directions" :key="key" :value="key">{{ label }}</option></select>
       <select v-model="status" aria-label="Status przesyłki"><option value="all">Wszystkie statusy</option><option v-for="(label, key) in statuses" :key="key" :value="key">{{ label }}</option></select>
       <a class="edelivery-link" href="https://edoreczenia.gov.pl/" target="_blank" rel="noopener noreferrer"><Mail :size="17" /> Otwórz skrzynkę <ExternalLink :size="15" /><span class="sr-only"> (nowa karta)</span></a>
     </nav>
-    <p class="register-note">{{ connection?.enabled ? `Połączenie skonfigurowane: ${connection.address}. Synchronizacja pobiera metadane do 500 najnowszych przesyłek, bez otwierania ich treści.` : 'Podłącz skrzynkę w Konfiguracji skrzynki lub dodawaj przesyłki ręcznie.' }} Rejestr jest widoczny tylko dla Ciebie. Dodanie wpisu nie wysyła korespondencji.</p>
+    <p class="register-note">{{ connection?.enabled ? `Połączenie skonfigurowane: ${connection.address}. Synchronizacja pobiera metadane do 500 najnowszych przesyłek, bez otwierania ich treści.` : 'Podłącz skrzynkę na stronie Ustawienia > Ustawienia eDoręczeń lub dodawaj przesyłki ręcznie.' }} Rejestr jest widoczny tylko dla Ciebie. Dodanie wpisu nie wysyła korespondencji.</p>
     <p v-if="notice" class="success" role="status">{{ notice }}</p>
-    <EDeliverySettings v-if="settingsOpen" :api="api" :initial="connection" @saved="settingsSaved" @close="settingsOpen = false" />
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="busy && !loaded" role="status">Wczytywanie rejestru…</p>
     <div v-if="loaded" class="panel register-table"><table><thead><tr><th>Data przesyłki</th><th>Temat / numer</th><th>Nadawca / odbiorca</th><th>Kierunek</th><th>Status</th><th>Akcje</th></tr></thead><tbody><tr v-for="item in filtered" :key="item.id"><td>{{ date(item.record_date) }}</td><td><button class="record-title" :disabled="busy || !!item.message_id" @click="edit(item)">{{ item.title }}</button><small v-if="item.reference">{{ item.reference }}</small><small v-if="item.message_id">UA API</small></td><td>{{ item.correspondent }}<small v-if="item.address">{{ item.address }}</small></td><td>{{ directions[item.direction] }}</td><td><span class="delivery-status" :class="item.status">{{ item.remote_status || statuses[item.status] }}</span></td><td class="record-actions"><button class="icon-button" :disabled="busy || !!item.message_id" :aria-label="`Edytuj przesyłkę: ${item.title}`" @click="edit(item)"><Pencil :size="17" /></button><button class="icon-button delete-button" :disabled="busy" :aria-label="`Usuń przesyłkę: ${item.title}`" @click="remove(item)"><Trash2 :size="17" /></button></td></tr></tbody></table><p v-if="!filtered.length" class="empty">{{ records.length ? 'Brak przesyłek pasujących do filtrów.' : 'Rejestr jest pusty. Dodaj pierwszą przesyłkę.' }}</p></div>

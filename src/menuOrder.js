@@ -1,7 +1,8 @@
-export const defaultMenuOrder = ['start', 'ai', 'mail', 'edelivery', 'tasks', 'calendar', 'notes', 'documents', 'surveys', 'drive', 'templates', 'dictionaries', 'companies', 'help', 'admin']
+export const defaultMenuOrder = ['start', 'mail', 'planning', 'documents', 'dictionaries', 'help', 'settings']
+const parentMenu = { admin: 'settings', 'mail-settings': 'settings', 'edelivery-settings': 'settings', drive: 'documents', edelivery: 'mail', tasks: 'planning', calendar: 'planning', notes: 'planning', surveys: 'documents', templates: 'documents' }
 
 export function normalizeMenuOrder(value) {
-  const known = Array.isArray(value) ? value.filter(id => defaultMenuOrder.includes(id)) : []
+  const known = Array.isArray(value) ? value.map(id => parentMenu[id] || id).filter(id => defaultMenuOrder.includes(id)) : []
   return [...new Set([...known, ...defaultMenuOrder])]
 }
 

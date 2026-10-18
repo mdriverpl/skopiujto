@@ -3,16 +3,32 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { compileScript, parse } from '@vue/compiler-sfc'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { fieldKey } from './documentFields.js'
 const compiled = compileScript(parse(readFileSync(new URL('./DictionariesPanel.vue', import.meta.url), 'utf8')).descriptor,
   { id: 'dictionaries-test' }).content.replace(/^import .*$/gm, '').replace('export default', 'globalThis.component =')
-function panel(api) {
-  const context = { computed, ref, fieldKey, AiDataPanel: {}, ExcelTransfer: {}, onMounted() {}, window: { confirm: () => true } }
+function panel(api, props = {}) {
+  const mounted = [], events = []
+  const context = { computed, ref, watch, fieldKey, AiDataPanel: {}, ExcelTransfer: {}, onMounted: callback => mounted.push(callback), window: { confirm: () => true } }
   runInNewContext(compiled, context)
-  return context.component.setup({ api }, { expose() {} })
+  const state = context.component.setup({ api, ...props }, { expose() {}, emit: (...args) => events.push(args) })
+  state.events = events
+  state.mount = async () => { for (const callback of mounted) await callback() }
+  return state
 }
 const dictionary = { id: 'employees', name: 'Pracownicy', fields: ['Imię', 'Nazwisko'], count: 0, version: 1 }
+
+test('menu selection opens the requested dictionary or AI immediately after loading', async () => {
+  for (const id of ['employees', 'ai']) {
+    const state = panel(async path => path === '/dictionaries' ? [dictionary] : path === '/saved-data' ? [] :
+      { dictionary, entries: [{ id: 'one', values: { 'Imię': 'Anna' } }] }, { initialDictionaryId: id })
+    await state.mount()
+    assert.equal(state.selected.value.id, id)
+    assert.equal(state.events.at(-1)[0], 'selected')
+    assert.equal(state.events.at(-1)[1], id)
+    if (id === 'employees') assert.equal(state.entries.value[0].values['Imię'], 'Anna')
+  }
+})
 test('tiles count existing AI data and open dictionary columns with search', async () => {
   const state = panel(async path => path === '/dictionaries' ? [dictionary] : path === '/saved-data' ? [{ fields: { city: 'Warsaw' } }] :
     { dictionary, entries: [{ id: 'one', values: { 'Imię': 'Anna', 'Nazwisko': 'Kowalska' } }] })

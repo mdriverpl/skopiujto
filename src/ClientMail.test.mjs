@@ -5,13 +5,14 @@ import { runInNewContext } from 'node:vm'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { computed, ref, watch, reactive, nextTick } from 'vue'
 import { mailSenderKind } from './mailSenderKind.js'
+import { loadUnifiedMail, isEmailMessage, isSpamMessage, isReceivedMessage, sourceKind } from './unifiedMail.js'
 
 const compiled = compileScript(parse(readFileSync(new URL('./ClientMail.vue', import.meta.url), 'utf8')).descriptor,
   { id: 'mail-test' }).content.replace(/^import .*$/gm, '').replace('export default', 'globalThis.component =')
-function panel(api, overrides = {}, emit = () => {}, fetcher = globalThis.fetch) {
+function panel(api, overrides = {}, emit = () => {}, fetcher = globalThis.fetch, localStorage) {
   const mounted = []
-  const context = { mailSenderKind, computed, ref, watch, onMounted(callback) { mounted.push(callback) }, FormData, fetch: fetcher, MailSettings: {} }
-  for (const icon of ['Inbox', 'Send', 'FileText', 'Archive', 'ShieldAlert', 'Trash2', 'Handshake', 'Landmark', 'UserRound', 'Megaphone', 'Bell', 'Ban']) context[icon] = {}
+  const context = { mailSenderKind, loadUnifiedMail, isEmailMessage, isSpamMessage, isReceivedMessage, sourceKind, computed, ref, watch, localStorage, onMounted(callback) { mounted.push(callback) }, FormData, fetch: fetcher, MailSettings: {}, MailTaskDialog: {}, MessageChannelTabs: {}, ChannelMessageDialog: {} }
+  for (const icon of ['ClipboardPlus', 'Mail', 'Users', 'MessageSquare', 'Inbox', 'Send', 'FileText', 'Archive', 'ShieldAlert', 'Trash2', 'Handshake', 'Landmark', 'UserRound', 'Megaphone', 'Bell', 'Ban']) context[icon] = {}
   runInNewContext(compiled, context)
   const state = context.component.setup(reactive({ api, ...overrides }), { expose() {}, emit })
   state.mount = async () => { for (const callback of mounted) await callback() }
@@ -20,6 +21,87 @@ function panel(api, overrides = {}, emit = () => {}, fetcher = globalThis.fetch)
 const message = { id: 'one', folder: 'inbox', sender_name: 'Jan Kowalski', sender_email: 'jan@example.com',
   recipient: 'ja@example.com', subject: 'Oferta', content: 'Warunki współpracy', unread: 1, label: 'urgent',
   version: 1, created_at: '2026-10-13T10:00:00Z', attachments: [{ id: 'a', name: 'Oferta.pdf' }] }
+
+test('single compose, group compose and replies keep their own layout and source', () => {
+  const state = panel(async () => ({}))
+  state.compose(); assert.equal(state.composerDictionaryMode.value, false)
+  state.compose(null, 'group'); assert.equal(state.composerDictionaryMode.value, true)
+  state.switchComposeChannel({ channel: 'sms', subject: 'Test', content: 'Body', recipient: '' })
+  assert.equal(state.composerDictionaryMode.value, true)
+  state.compose(message, 'reply')
+  assert.equal(state.composerReply.value, true)
+  assert.equal(state.composerChannel.value, 'email')
+  assert.equal(state.composer.value.recipient, 'jan@example.com')
+  state.compose({ ...message, sender_email: '', center: { channel: 'user', reply_to: { id: 'u:anna', name: 'Anna' } } }, 'reply')
+  assert.equal(state.composerChannel.value, 'user')
+  assert.equal(state.composer.value.recipientId, 'u:anna')
+  assert.equal(state.composerDictionaryMode.value, false)
+})
+
+test('restored mailbox loads all sources and opens portal messages without email requests', async () => {
+  const calls = []
+  const state = panel(async (path, method) => {
+    calls.push([path, method])
+    if (path === '/client-mail') return [message]
+    if (path.startsWith('/message-center?')) return { total: 2, items: [
+      { id: 'email:one', source: 'email', source_id: 'one', channel: 'email' },
+      { id: 'internal:portal', source: 'internal', source_id: 'portal', channel: 'user', title: 'Przez portal',
+        sender: 'Anna', recipient: 'Jan', unread: true, created_at: '2000-01-01T12:00:00Z' }
+    ] }
+    if (path === '/message-center/internal%3Aportal/read-state') return { unread: false }
+    return { account: { imap: { enabled: false } } }
+  }, { unified: true })
+  await state.load()
+  assert.equal(state.filtered.value.length, 2)
+  assert.equal(state.unifiedHours.value, null)
+  const portal = state.messages.value.find(item => item.center.source === 'internal')
+  assert.equal(portal.sender_email, '')
+  await state.open(portal)
+  assert.equal(state.selected.value.id, 'internal:portal')
+  assert.equal(state.selected.value.unread, false)
+  assert.equal(state.composer.value, null)
+  assert.ok(calls.some(([path, method]) => path === '/message-center/internal%3Aportal/read-state' && method === 'PATCH'))
+  assert.equal(calls.some(([path, method]) => path.startsWith('/client-mail/') && method === 'PATCH'), false)
+  const previousCalls = calls.length
+  await state.patch(portal, { unread: false })
+  assert.equal(calls.length, previousCalls)
+})
+
+test('unread stars persist email and other channel status without opening the message', async () => {
+  const calls = []
+  const state = panel(async (path, method, body) => {
+    calls.push({ path, method, body })
+    return path.startsWith('/message-center/') ? { unread: body.unread } : { ...message, ...body, version: 2 }
+  }, { unified: true })
+  const delivery = { ...message, id: 'edelivery:one', unread: true,
+    center: { id: 'edelivery:one', source: 'edelivery', direction: 'incoming', unread: true } }
+  state.messages.value = [{ ...message, unread: false }, delivery]
+  state.filter.value = 'unread'
+  assert.equal(state.filtered.value.length, 1)
+  await state.setUnread(state.messages.value[0], true)
+  assert.equal(calls[0].body.unread, true)
+  assert.equal('starred' in calls[0].body, false)
+  assert.equal(state.selectedId.value, null)
+  assert.equal(state.filtered.value.length, 2)
+  await state.open(delivery)
+  assert.equal(delivery.unread, false)
+  assert.equal(state.unread.value, 1)
+  await state.setUnread(delivery, true)
+  assert.equal(delivery.unread, true)
+  assert.equal(delivery.center.unread, true)
+  assert.equal(calls.at(-1).path, '/message-center/edelivery%3Aone/read-state')
+  assert.equal(state.filtered.value.length, 2)
+})
+
+test('failed read status save leaves the unread star and count unchanged', async () => {
+  const state = panel(async () => { throw new Error('Save failed') }, { unified: true })
+  const delivery = { ...message, id: 'edelivery:one', center: { id: 'edelivery:one', source: 'edelivery' } }
+  state.messages.value = [delivery]
+  await state.open(delivery)
+  assert.equal(delivery.unread, 1)
+  assert.equal(state.unread.value, 1)
+  assert.match(state.error.value, /Save failed/)
+})
 
 test('filters search attachments, labels and folders; opening persists read status', async () => {
   const calls = []
@@ -34,6 +116,84 @@ test('filters search attachments, labels and folders; opening persists read stat
   assert.equal(calls[0].body.unread, false)
   assert.equal(state.selected.value.version, 2)
   assert.equal(state.unread.value, 0)
+})
+
+test('moving unified mail to spam immediately removes it from received rows and unread count', async () => {
+  const state = panel(async (path, method, body) => ({ ...message, ...body, version: 2 }), { unified: true })
+  state.messages.value = [{ ...message, center: { source: 'email', folder: 'inbox' } },
+    { ...message, id: 'classified', category: 'spam' }]
+  assert.equal(state.filtered.value.length, 1)
+  assert.equal(state.unread.value, 1)
+  await state.patch(state.messages.value[0], { folder: 'spam' })
+  assert.equal(state.filtered.value.length, 0)
+  assert.equal(state.unread.value, 0)
+  const spam = panel(async () => {}, { initialFolder: 'spam' })
+  spam.messages.value = state.messages.value
+  assert.equal(spam.filtered.value.length, 2)
+  assert.equal(spam.filtered.value[0].id, message.id)
+})
+
+test('received rows exclude outgoing messages and immediately hide archived or sent emails', async () => {
+  const state = panel(async (path, method, body) => ({ ...message, ...body, version: 2 }), { unified: true })
+  state.messages.value = [message, { ...message, id: 'sent', folder: 'sent' },
+    { ...message, id: 'portal-out', center: { source: 'internal', direction: 'outgoing' } }]
+  assert.equal(state.filtered.value.length, 1)
+  assert.equal(state.unread.value, 1)
+  await state.patch(message, { folder: 'archive' })
+  assert.equal(state.filtered.value.length, 0)
+  assert.equal(state.unread.value, 0)
+  const sent = panel(async () => {}, { initialFolder: 'sent' })
+  sent.messages.value = state.messages.value
+  assert.equal(sent.filtered.value.length, 1)
+  assert.equal(sent.filtered.value[0].id, 'sent')
+})
+
+test('time range survives returning to inbox and reloads, with independent folder settings', async () => {
+  const saved = new Map()
+  const storage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) }
+  const api = async path => path === '/client-mail/settings' ? { account: { imap: { enabled: false } } }
+    : path.startsWith('/message-center?') ? { items: [], total: 0 } : []
+  const create = props => panel(api, props, () => {}, globalThis.fetch, storage)
+  const inbox = create({ unified: true, initialFolder: 'inbox' })
+  await inbox.changeTimeRange(24)
+  const restored = create({ unified: true, initialFolder: 'inbox' })
+  assert.equal(restored.unifiedHours.value, 24)
+  assert.equal(restored.syncHours.value, 24)
+  const sent = create({ initialFolder: 'sent' })
+  await sent.changeTimeRange(168)
+  assert.equal(create({ unified: true, initialFolder: 'inbox' }).unifiedHours.value, 24)
+  assert.equal(create({ initialFolder: 'sent' }).syncHours.value, 168)
+  restored.showAllTime()
+  assert.equal(create({ unified: true, initialFolder: 'inbox' }).unifiedHours.value, null)
+  sent.changeFolder('inbox')
+  assert.equal(sent.syncHours.value, 24)
+  sent.changeFolder('sent')
+  assert.equal(sent.syncHours.value, 168)
+  saved.set('edokumenty-mail-range:inbox', 'invalid')
+  assert.equal(create({ unified: true, initialFolder: 'inbox' }).unifiedHours.value, null)
+})
+
+test('new message count follows the active time range and excludes spam and outgoing mail', () => {
+  const state = panel(async () => {}, { unified: true })
+  const recent = new Date(Date.now() - 2 * 3600000).toISOString()
+  const older = new Date(Date.now() - 30 * 3600000).toISOString()
+  state.messages.value = [
+    { ...message, id: 'new', created_at: recent },
+    { ...message, id: 'older', created_at: older },
+    { ...message, id: 'read', created_at: recent, unread: false },
+    { ...message, id: 'spam', created_at: recent, folder: 'spam' },
+    { ...message, id: 'classified-spam', created_at: recent, category: 'spam' },
+    { ...message, id: 'sent', created_at: recent, folder: 'sent' }
+  ]
+  state.unifiedHours.value = 24
+  assert.equal(state.unread.value, 1)
+  state.unifiedHours.value = 48
+  assert.equal(state.unread.value, 2)
+  state.headerSearch.value = 'no match'
+  assert.equal(state.unread.value, 0)
+  state.headerSearch.value = ''
+  state.showAllTime()
+  assert.equal(state.unread.value, 2)
 })
 
 test('SMTP failure keeps saved draft and editable text for retry', async () => {

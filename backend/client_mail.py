@@ -176,28 +176,39 @@ def install(app, db, user, now):
             return [serialize(con, row, rules_context, parts[row['id']]) for row in rows]
 
     @app.get('/api/client-mail/summary')
-    def mailbox_summary(current=Depends(user)):
+    def mailbox_summary(hours: int | None = Query(default=None), current=Depends(user)):
+        if hours is not None and hours not in mail_sync.ALLOWED_HOURS:
+            raise HTTPException(422, 'Wybierz zakres: 24 h, 48 h, 7 dni lub 30 dni.')
         with db() as con:
             row = con.execute("""SELECT COUNT(*) AS total,
                 COUNT(*) FILTER (WHERE unread=1) AS unread,
                 COUNT(*) FILTER (WHERE unread=1 AND label='urgent') AS urgent
                 FROM client_mail WHERE user_id=? AND folder='inbox' AND category!='spam'""", (current['id'],)).fetchone()
             result = {key: int(row[key]) for key in ('total', 'unread', 'urgent')}
-            today = mail_sync.utc_now().astimezone(mail_daily.WARSAW).date()
+            current_time = mail_sync.utc_now()
+            today = current_time.astimezone(mail_daily.WARSAW).date()
+            cutoff = current_time - timedelta(hours=hours) if hours is not None else None
             result.update(today=0, today_unread=0, today_urgent=0,
                           today_clients=0, today_government=0, today_other=0, today_invoices=0)
+            if cutoff:
+                result.update(period=0, period_unread=0, period_urgent=0, period_clients=0,
+                              period_government=0, period_other=0, period_invoices=0, hours=hours)
             rules_context = mail_rules.context(con, current['id'])
             for message in con.execute("""SELECT created_at,unread,label,category,sender_email FROM client_mail
                 WHERE user_id=? AND folder='inbox' AND category!='spam' AND created_at>=?""",
-                (current['id'], (today - timedelta(days=1)).isoformat())):
-                if mail_daily.parsed_day(message['created_at']) != today: continue
-                result['today'] += 1
-                result['today_unread'] += int(bool(message['unread']))
-                result['today_urgent'] += int(bool(message['unread']) and message['label'] == 'urgent')
+                (current['id'], min(today - timedelta(days=1), cutoff.date() - timedelta(days=1) if cutoff else today).isoformat())):
+                stamp = mail_daily.parsed_time(message['created_at'])
+                if not stamp: continue
+                prefixes = (['today'] if stamp.date() == today else []) + (['period'] if cutoff and cutoff <= stamp <= current_time else [])
+                if not prefixes: continue
                 sender = mail_rules.classify(message['sender_email'], rules_context)
                 kind = 'government' if sender['government'] else 'clients' if sender['company'] else 'other'
-                result['today_' + kind] += 1
-                result['today_invoices'] += int(message['label'] == 'invoice' or message['category'] == 'invoice')
+                for prefix in prefixes:
+                    result[prefix] += 1
+                    result[prefix + '_unread'] += int(bool(message['unread']))
+                    result[prefix + '_urgent'] += int(bool(message['unread']) and message['label'] == 'urgent')
+                    result[prefix + '_' + kind] += 1
+                    result[prefix + '_invoices'] += int(message['label'] == 'invoice' or message['category'] == 'invoice')
             return result
 
     @app.get('/api/client-mail/companies')

@@ -12,9 +12,10 @@ const task = { id: 'one', key: 'task:one', origin: 'task', kind: 'general', titl
   status: 'todo', can_update: true, can_cancel: false, version: 1, sender_name: 'Anna' }
 const approval = { id: 'approval', key: 'approval:approval', origin: 'approval', kind: 'approval', title: 'Umowa',
   status: 'waiting', can_accept: true, can_download: true, file_version: 2, filename: 'umowa.pdf' }
-function panel(api, props = {}) {
-  const mounted = [], events = [], context = { computed, ref, onMounted: callback => mounted.push(callback),
-    onBeforeUnmount() {}, setInterval() { return 1 }, clearInterval() {}, window: { confirm: () => true } }
+function panel(api, props = {}, storage = new Map(), confirm = () => true) {
+  const mounted = [], events = [], context = { TaskStatusMenu: {}, TaskMessageSource: {}, computed, ref, onMounted: callback => mounted.push(callback),
+    onBeforeUnmount() {}, setInterval() { return 1 }, clearInterval() {}, window: { confirm },
+    localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) } }
   runInNewContext(compiled, context)
   const state = context.component.setup({ api, currentUser: me, documents: [{ id: 'doc-one', title: 'Umowa' }],
     folders: [{ id: 'parent', name: 'Firma', permissions: { read: false } },
@@ -32,6 +33,20 @@ test('filters show tasks for me or sent tasks, with text and status filtering', 
   assert.equal(state.filtered.value[0].title, 'Wysłane')
   state.statusFilter.value = 'done'; assert.equal(state.filtered.value.length, 0)
   assert.ok(events.some(event => event[0] === 'loaded' && event[1].waiting === 2))
+})
+
+test('message tasks show original client as sender and search by client email or company', () => {
+  const { state } = panel(async () => ({}))
+  const linked = { ...task, sender_name: 'Own Account', client: { name: 'Client Name', email: 'client@example.com', company: 'Client Company' } }
+  state.data.value = { mine: [linked, task], sent: [], waiting: 2 }
+  assert.equal(state.taskSender(linked), 'Client Name <client@example.com>')
+  assert.equal(state.taskSender(task), 'Anna')
+  assert.equal(state.taskSender({ ...task, source_message: { sender: 'Portal Sender' } }), 'Portal Sender')
+  state.search.value = 'CLIENT@EXAMPLE.COM'
+  assert.equal(state.filtered.value.length, 1)
+  state.search.value = 'client company'
+  assert.equal(state.filtered.value.length, 1)
+  assert.ok(state.clientLabel(linked).includes('Client Company'))
 })
 
 test('new task is assigned with optional document and time and switches to sent filter', async () => {
@@ -54,6 +69,16 @@ test('new task is assigned with optional document and time and switches to sent 
   assert.equal(calls[1].body.due_at, null)
   assert.equal(state.draft.value, null)
   assert.equal(state.scope.value, 'sent')
+})
+
+test('status save reports failed email without undoing the saved task state', async () => {
+  const { state } = panel(async (path, method) => method === 'PATCH'
+    ? { notification: { status: 'failed', message: 'SMTP unavailable' } }
+    : { mine: [{ ...task, status: 'done', version: 2 }], sent: [], waiting: 0 })
+  await state.changeStatus(task, 'done')
+  assert.equal(state.data.value.mine[0].status, 'done')
+  assert.match(state.notice.value, /Robocze/)
+  assert.match(state.error.value, /SMTP unavailable/)
 })
 
 test('resource choice sends only the selected folder or file and general clears both', async () => {
@@ -191,4 +216,72 @@ test('shortcut dialog can close or retry loading recipients and preserves failed
   assert.equal(events.length, 0)
   state.closeDraft(); assert.equal(state.draft.value, null)
   assert.equal(events[0][0], 'close')
+})
+
+test('layout choice is stored per account and restored without changing filters', () => {
+  const storage = new Map()
+  const { state } = panel(async () => ({}), {}, storage)
+  state.scope.value = 'sent'; state.search.value = 'Umowa'
+  for (const value of ['grid', 'icons', 'list', 'icons']) {
+    state.changeLayout(value)
+    assert.equal(state.layout.value, value)
+    assert.equal(panel(async () => ({}), {}, storage).state.layout.value, value)
+  }
+  assert.equal(state.scope.value, 'sent')
+  assert.equal(state.search.value, 'Umowa')
+  assert.equal(panel(async () => ({}), {}, storage).state.layout.value, 'icons')
+  assert.equal(panel(async () => ({}), { currentUser: { id: 'other' } }, storage).state.layout.value, 'list')
+  state.changeLayout('unknown')
+  assert.equal(state.layout.value, 'icons')
+})
+
+test('inline status options honor participant rights and keep approval confirmation separate', () => {
+  const { state } = panel(async () => ({}))
+  const values = item => Array.from(state.statusOptions(item), option => option.value)
+  assert.deepEqual(values(task), ['todo', 'in_progress', 'done'])
+  assert.deepEqual(values({ ...task, can_update: false, can_cancel: true }), ['todo', 'cancelled'])
+  assert.deepEqual(values({ ...task, status: 'done', can_update: false }), ['done'])
+  assert.deepEqual(values(approval), ['waiting'])
+  assert.deepEqual(values({ origin: 'deadline', status: 'todo', can_update: true }), ['todo', 'done'])
+})
+
+test('failed inline status save and cancelled confirmation restore the displayed status', async () => {
+  const calls = []
+  const { state } = panel(async (path, method) => { calls.push([path, method]); throw new Error('Konflikt wersji') })
+  await state.changeStatus(task, 'done')
+  assert.equal(task.status, 'todo')
+  assert.match(state.error.value, /Konflikt wersji/)
+  assert.equal(state.busy.value, false)
+  const cancelled = panel(async () => { throw new Error('Nie wywołuj API') }, {}, new Map(), () => false)
+  await cancelled.state.changeStatus({ ...task, can_cancel: true }, 'cancelled')
+  assert.equal(cancelled.state.error.value, '')
+})
+
+test('delete uses latest task version, reloads both lists, and requires author permission', async () => {
+  const calls = []
+  const { state, events } = panel(async (path, method) => {
+    calls.push([path, method]); return method ? { ok: true } : { mine: [], sent: [], waiting: 0 }
+  })
+  await state.deleteTask(task)
+  await state.deleteTask({ ...approval, can_delete: true })
+  assert.equal(calls.length, 0)
+  await state.deleteTask({ ...task, version: 3, can_delete: true })
+  assert.deepEqual(calls[0], ['/tasks/one?version=3', 'DELETE'])
+  assert.equal(calls[1][0], '/tasks')
+  assert.ok(events.some(event => event[0] === 'updated'))
+  assert.match(state.notice.value, /usunięte/)
+})
+
+test('deletion failure keeps task visible and declining confirmation does not call API', async () => {
+  const { state } = panel(async () => { throw new Error('Zadanie zostało zmienione') })
+  state.data.value = { mine: [task], sent: [task], waiting: 1 }
+  await state.deleteTask({ ...task, can_delete: true })
+  assert.equal(state.data.value.mine[0].id, task.id)
+  assert.equal(state.data.value.sent[0].id, task.id)
+  assert.match(state.error.value, /zmienione/)
+  assert.equal(state.notice.value, '')
+  let called = false
+  const declined = panel(async () => { called = true }, {}, new Map(), () => false)
+  await declined.state.deleteTask({ ...task, can_delete: true })
+  assert.equal(called, false)
 })

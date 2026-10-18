@@ -41,7 +41,10 @@ test('administration guides are limited to administrators, including direct sele
 })
 
 test('every navigable module has contextual guidance and unknown module falls back safely', () => {
-  for (const id of [...defaultMenuOrder, 'active']) {
+  // Expandable menu groups have no page of their own; their child pages do.
+  const pages = [...defaultMenuOrder.filter(id => !['planning', 'settings'].includes(id)),
+    'tasks', 'calendar', 'notes', 'surveys', 'templates', 'admin', 'edelivery', 'active']
+  for (const id of pages) {
     const topic = getHelpTopic(id)
     assert.equal(topic.id, id)
     assert.ok(topic.description && topic.steps.length > 0)

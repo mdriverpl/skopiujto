@@ -77,7 +77,26 @@ Błędy: 401 — brak/wygaśnięcie uwierzytelnienia, 403 — brak uprawnień,
 404 — obiekt niedostępny lub nieistniejący, 409 — konflikt wersji lub stanu,
 422 — niepoprawne dane. Aktualizacja dokumentów wymaga `version`.
 Pliki wysyła się przez `multipart/form-data` do `/api/files`.
+`GET /api/documents/{id}/pdf` pobiera PDF zapisanej treści dokumentu z edytora
+(wymaga odczytu). Eksport obejmuje polskie znaki, nagłówki, listy i podstawowe
+formatowanie. Załączony PDF można pobrać bez konwersji; inne załączniki nie
+obsługują konwersji do PDF.
+
+`PATCH /api/documents/{id}/move` przyjmuje `{"folder_id":"ID", "version":1}`;
+`folder_id: null` oznacza katalog główny dysku. Przenosić może właściciel
+dokumentu lub dodający plik, z prawem usuwania w źródle i dodawania w celu.
+Operacja zapisuje historię i zachowuje wersję pliku oraz jego akceptacje.
 Schematy żądań i lista dostępnych operacji znajdują się w OpenAPI.
+
+`GET /api/message-center` zwraca wspólną listę korespondencji bieżącego konta:
+e-mail, wiadomości do i od pracowników, wysyłki SMS, pliki do akceptacji
+oraz wpisy rejestru eDoręczeń. Parametry: `channel` (`all`, `email`, `user`,
+`sms`, `edelivery`), `direction` (`all`, `incoming`, `outgoing`), `search`,
+`offset` i `limit` (1–100, domyślnie 40). Odpowiedź zawiera `items`, `total`,
+liczniki `counts` i `unread`. Każdy wiersz ma rodzaj, źródło, kierunek i status.
+Lista obejmuje całą zapisaną historię przez stronicowanie. Odczyt nie wysyła
+wiadomości ani nie uruchamia synchronizacji u operatorów. Dla eDoręczeń
+pokazuje dane rejestru; SMS-y pochodzą z zapisanej historii wysyłek aplikacji.
 
 Integracje powinny łączyć się przez HTTPS. Ustaw
 `EDOCUMENTS_SECURE_COOKIE=1`, gdy aplikacja jest udostępniana przez HTTPS.

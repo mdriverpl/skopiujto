@@ -1,11 +1,46 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import MailSettings from './MailSettings.vue'
 import { mailSenderKind } from './mailSenderKind.js'
+import { loadUnifiedMail, isEmailMessage, isSpamMessage, isReceivedMessage, sourceKind } from './unifiedMail.js'
+import MailTaskDialog from './MailTaskDialog.vue'
+import ChannelMessageDialog from './ChannelMessageDialog.vue'
 import { Handshake, UserRound, Megaphone, Bell, Ban } from 'lucide-vue-next'
-import { Mail, Search, Sparkles, Settings, Plus, Upload, RefreshCw, Star, Reply, Forward, Trash2, Archive, Paperclip, Inbox, Send, FileText, ShieldAlert, ShieldCheck, Building2, Landmark, HardDrive, FolderPlus, X, Download, ChevronLeft, List, LayoutGrid, CheckSquare, Lightbulb, AlertCircle, Pin } from 'lucide-vue-next'
-const props = defineProps({ api: Function, initialFolder: String, folderRequest: Number, initialMessageId: String })
-const emit = defineEmits(['folder-change', 'message-opened'])
+import { ClipboardPlus, Mail, Users, MessageSquare, Search, Sparkles, Settings, Plus, Upload, RefreshCw, Star, Reply, Forward, Trash2, Archive, Paperclip, Inbox, Send, FileText, ShieldAlert, ShieldCheck, Building2, Landmark, HardDrive, FolderPlus, X, Download, ChevronLeft, List, LayoutGrid, CheckSquare, Lightbulb, AlertCircle, Pin } from 'lucide-vue-next'
+const props = defineProps({ api: Function, currentUser: Object, initialFolder: String, folderRequest: Number, initialMessageId: String, unified: Boolean })
+const emit = defineEmits(['folder-change', 'message-opened', 'open-settings', 'navigate', 'task-created'])
+const taskMessage = ref(null)
+const composerChannel = ref('email')
+const composerDictionaryMode = ref(false)
+const composerReply = ref(false)
+const composeSuggestions = ref([]), composeSuggestionsError = ref('')
+const composeSuggestionsOpen = ref(false)
+const matchingComposeSuggestions = computed(() => {
+  const query = (composer.value?.recipient || '').trim().toLocaleLowerCase('pl')
+  if (!query) return []
+  const seen = new Set()
+  return composeSuggestions.value.filter(person => {
+    const email = person.channels.email
+    if (seen.has(email) || !`${person.name} ${email}`.toLocaleLowerCase('pl').includes(query)) return false
+    seen.add(email); return true
+  }).slice(0, 8)
+})
+function chooseComposeSuggestion(person) {
+  composer.value.recipient = person.channels.email
+  composeSuggestionsOpen.value = false
+}
+async function loadComposeSuggestions() {
+  try {
+    const rows = await Promise.all([props.api('/messages/contacts?source=dictionaries'), props.api('/messages/contacts?source=history')])
+    composeSuggestions.value = rows.flat().filter(person => person.channels.email)
+    composeSuggestionsError.value = ''
+  } catch { composeSuggestionsError.value = 'Nie udało się pobrać podpowiedzi. Możesz wpisać adres ręcznie.' }
+}
+function switchComposeChannel(draft) {
+  composer.value.subject = draft.subject
+  composer.value.content = draft.content
+  composer.value.recipient = draft.recipient ?? composer.value.recipient
+  composerChannel.value = draft.channel
+}
 const messages = ref([]), selectedId = ref(null), folder = ref(props.initialFolder || 'inbox'), filter = ref('all'), search = ref({ email: '', subject: '', content: '', filename: '' }), sort = ref('newest'), grid = ref(false)
 watch(() => [props.initialFolder, props.folderRequest], ([next, request], previous) => {
   if (next && (next !== folder.value || request !== previous?.[1])) changeFolder(next)
@@ -14,10 +49,39 @@ watch(() => props.initialMessageId, async id => { if (id) { await run(load); awa
 const headerSearch = ref('')
 const categoryFilter = ref('')
 const syncHours = ref(24)
+const unifiedHours = ref(null)
+function restoreTimeRange() {
+  let hours = props.unified ? null : 24
+  try {
+    const saved = localStorage.getItem(`edokumenty-mail-range:${folder.value}`)
+    if (saved === 'all' && props.unified) hours = null
+    else if (['24', '48', '168', '720'].includes(saved)) hours = Number(saved)
+  } catch {}
+  unifiedHours.value = hours
+  syncHours.value = hours ?? 24
+}
+function saveTimeRange(hours) {
+  try { localStorage.setItem(`edokumenty-mail-range:${folder.value}`, hours === null ? 'all' : String(hours)) } catch {}
+}
+function showAllTime() {
+  unifiedHours.value = null
+  saveTimeRange(null)
+}
+restoreTimeRange()
+watch(folder, restoreTimeRange, { flush: 'sync' })
+const messageSources = {
+  email: { label: 'E-mail', icon: Mail, hint: 'Wiadomość e-mail' },
+  portal: { label: 'Portal', icon: Users, hint: 'Wiadomość do pracownika przez portal — bez e-maila' },
+  sms: { label: 'SMS', icon: MessageSquare, hint: 'Wiadomość SMS' },
+  edelivery: { label: 'eDoręczenia', icon: Landmark, hint: 'Przesyłka z rejestru eDoręczeń' },
+  other: { label: 'Inna', icon: Inbox, hint: 'Inne źródło wiadomości' }
+}
 const timeRanges = [{ hours: 24, label: '24 h' }, { hours: 48, label: '48 h' }, { hours: 168, label: '7 dni' }, { hours: 720, label: '30 dni' }]
 async function changeTimeRange(hours) {
-  if (busy.value || syncHours.value === hours) return
+  if (busy.value || (syncHours.value === hours && (!props.unified || unifiedHours.value === hours))) return
+  if (props.unified) unifiedHours.value = hours
   syncHours.value = hours; selectedId.value = null
+  saveTimeRange(hours)
   await run(refresh)
 }
 const categories = { spam: 'Spam', advertisement: 'Reklama', invoice: 'Faktura', payment: 'Płatność', order: 'Zamówienie', newsletter: 'Newsletter', notification: 'Powiadomienie', correspondence: 'Korespondencja', other: 'Inne' }
@@ -36,7 +100,7 @@ function drivePath(id) {
 const driveChoices = computed(() => driveFolders.value.map(item => ({ ...item, path: drivePath(item.id) })).sort((a, b) => a.path.localeCompare(b.path, 'pl')))
 const driveTargetRights = computed(() => driveDialog.value?.destination ? driveFolders.value.find(item => item.id === driveDialog.value.destination)?.permissions : driveAccess.value)
 const canSaveToDrive = computed(() => !!driveDialog.value?.chosen.length && driveTargetRights.value?.read && driveTargetRights.value?.add && !driveLoading.value && !driveSaving.value && (!driveDialog.value.createFolder || !!driveDialog.value.newName.trim()))
-const busy = ref(false), error = ref(''), notice = ref(''), settings = ref(null), showSettings = ref(false), composer = ref(null), analysis = ref({}), aiBusy = ref(false), importInput = ref(null)
+const busy = ref(false), error = ref(''), notice = ref(''), settings = ref(null), composer = ref(null), analysis = ref({}), aiBusy = ref(false), importInput = ref(null)
 const spamFeedback = ref(false)
 const folders = [
   { id: 'inbox', label: 'Odebrane', icon: Inbox }, { id: 'sent', label: 'Wysłane', icon: Send },
@@ -68,11 +132,13 @@ async function chooseLabel(label) {
 }
 const selected = computed(() => messages.value.find(m => m.id === selectedId.value))
 const currentAnalysis = computed(() => analysis.value[selectedId.value])
-const inbox = computed(() => messages.value.filter(m => m.folder === 'inbox'))
-const unread = computed(() => inbox.value.filter(m => m.unread).length)
+const inbox = computed(() => messages.value.filter(isReceivedMessage))
+const unread = computed(() => filtered.value.filter(m => m.unread && isReceivedMessage(m)).length)
 const matches = (value, query) => (value || '').toLocaleLowerCase('pl').includes(query.trim().toLocaleLowerCase('pl'))
 function clearSearch() { search.value = { email: '', subject: '', content: '', filename: '' } }
-const filtered = computed(() => messages.value.filter(m => m.folder === folder.value)
+const filtered = computed(() => messages.value.filter(m => props.unified ? isReceivedMessage(m)
+  : folder.value === 'spam' ? isSpamMessage(m) : m.folder === folder.value && (folder.value !== 'inbox' || !isSpamMessage(m)))
+  .filter(m => !props.unified || unifiedHours.value === null || Date.parse(m.created_at) >= Date.now() - unifiedHours.value * 3600000)
   .filter(m => !categoryFilter.value || (categoryFilter.value === 'uncategorized' ? !m.category : m.category === categoryFilter.value))
   .filter(m => filter.value === 'all' || (filter.value === 'unread' ? m.unread : filter.value === 'attachments' ? m.attachments.length : m.label === filter.value))
   .filter(m => !headerSearch.value.trim() || [m.sender_name, m.sender_email, m.recipient, m.subject, m.content, ...m.attachments.map(part => part.name)].some(value => matches(value, headerSearch.value)))
@@ -103,6 +169,12 @@ async function run(action) {
   try { return await action() } catch (err) { error.value = err.message } finally { busy.value = false }
 }
 async function load() {
+  if (props.unified) {
+    const [all, config] = await Promise.all([loadUnifiedMail(props.api), props.api('/client-mail/settings')])
+    messages.value = all; settings.value = config
+    if (!selected.value) selectedId.value = null
+    return
+  }
   const include = props.initialMessageId || selectedId.value
   const path = `/client-mail?hours=${syncHours.value}` + (include ? `&include_id=${encodeURIComponent(include)}` : '')
   const result = await Promise.all([props.api(path), props.api('/client-mail/settings')])
@@ -130,7 +202,9 @@ async function scanSpam() {
   }
 }
 async function patch(message, changes) {
+  if (!isEmailMessage(message)) return
   const result = await props.api(`/client-mail/${message.id}`, 'PATCH', { version: message.version, ...changes })
+  if (message.center) result.center = { ...message.center, folder: result.folder }
   replace(result)
   if (changes.folder === 'spam' && message.folder !== 'spam') {
     if (selectedId.value === message.id) selectedId.value = null
@@ -140,6 +214,7 @@ async function patch(message, changes) {
 }
 async function editCompany() {
   const message = selected.value
+  if (!isEmailMessage(message)) return
   await run(async () => {
     companies.value = await props.api('/client-mail/companies')
     companyEditor.value = { messageId: message.id, version: message.version, address: message.sender_email,
@@ -172,7 +247,7 @@ async function removeCompany() {
 }
 async function spamSender() {
   const message = selected.value
-  if (!message || message.safe || message.company || message.spam_protected) return
+  if (!isEmailMessage(message) || message.safe || message.company || message.spam_protected) return
   await run(async () => {
     await props.api(`/client-mail/${message.id}/spam-address`, message.blocked ? 'DELETE' : 'POST', { version: message.version })
     await load()
@@ -181,11 +256,21 @@ async function spamSender() {
   })
 }
 function changeFolder(id) { folder.value = id; selectedId.value = null; filter.value = 'all'; categoryFilter.value = ''; emit('folder-change', id) }
+async function setUnread(message, unread) {
+  if (isEmailMessage(message)) return patch(message, { unread })
+  const result = await props.api(`/message-center/${encodeURIComponent(message.center.id)}/read-state`, 'PATCH', { unread })
+  message.unread = result.unread
+  message.center.unread = result.unread
+}
 async function open(message) {
   if (busy.value) return
   selectedId.value = message.id
+  if (!isEmailMessage(message)) {
+    if (message.unread) await run(() => setUnread(message, false))
+    return
+  }
   if (message.folder === 'drafts') { compose(message); return }
-  if (message.unread) await run(() => patch(message, { unread: false }))
+  if (message.unread) await run(() => setUnread(message, false))
 }
 async function showRequestedMessage(id) {
   const message = messages.value.find(item => item.id === id)
@@ -194,12 +279,22 @@ async function showRequestedMessage(id) {
   emit('message-opened')
 }
 function compose(message = null, mode = 'draft') {
+  composeSuggestionsOpen.value = false
+  composerDictionaryMode.value = mode === 'group'
+  composerReply.value = mode === 'reply'
+  composerChannel.value = mode === 'reply' && message?.center?.channel ? message.center.channel : mode === 'portal' ? 'user' : mode === 'sms' ? 'sms' : 'email'
   error.value = ''; notice.value = ''
   if (message && mode === 'draft') { composer.value = { ...message }; return }
   const forward = mode === 'forward'
   composer.value = { recipient: message && !forward ? message.sender_email : '',
     subject: message ? `${forward ? 'Fwd: ' : /^Re:/i.test(message.subject) ? '' : 'Re: '}${message.subject}` : '',
     content: message ? `\n\n---------- ${forward ? 'Przekazana wiadomość' : 'Wiadomość oryginalna'} ----------\nOd: ${message.sender_name} <${message.sender_email}>\nTemat: ${message.subject}\n\n${message.content}` : '' }
+  if (message && !forward && composerChannel.value !== 'email') {
+    composer.value.recipient = message.center?.reply_to?.name || message.center?.address || ''
+    composer.value.recipientId = message.center?.reply_to?.id || ''
+    if (composerChannel.value === 'sms') composer.value.recipient = message.center?.address || ''
+    composer.value.content = ''
+  }
 }
 async function saveDraft() {
   const draft = composer.value
@@ -299,28 +394,41 @@ onMounted(async () => { await run(async () => { try { await scanSpam() } catch (
 </script>
 
 <template>
-  <section class="client-mail" aria-label="Poczta">
+  <section class="client-mail" aria-label="Centrum wiadomości">
     <div class="mail-heading">
-      <Teleport to="#workspace-title"><div class="mail-title"><span class="mail-logo"><Mail :size="24" /></span><div><div class="mail-title-line"><h1>Poczta</h1><button class="mail-icon" aria-label="Ustawienia konta pocztowego" title="Ustawienia konta pocztowego" @click="showSettings = true"><Settings :size="19" /></button></div><small>Twoja korespondencja, uporządkowana.</small></div></div></Teleport>
+      <Teleport to="#workspace-title"><div class="mail-title"><span class="mail-logo"><Mail :size="24" /></span><div><div class="mail-title-line"><h1>Centrum wiadomości</h1><button class="mail-icon" aria-label="Ustawienia konta pocztowego" title="Ustawienia konta pocztowego" @click="emit('open-settings')"><Settings :size="19" /></button></div><small>Twoja korespondencja, uporządkowana.</small></div></div></Teleport>
       <Teleport to="#workspace-search"><label class="mail-search"><Search :size="19" /><input v-model="headerSearch" type="search" aria-label="Szukaj w wiadomościach po temacie, adresie e-mail, treści lub nazwie pliku" placeholder="Szukaj w wiadomościach: temat, e-mail, treść, pliki…" /></label></Teleport>
     </div>
     <p v-if="error" class="mail-error" role="alert">{{ error }}</p><p v-if="notice" class="mail-notice" :class="{ 'mail-spam-notice': spamFeedback }" role="status"><span v-if="spamFeedback" class="mail-spam-flight" aria-hidden="true"><Mail class="mail-flying-envelope" :size="20" /><ShieldAlert class="mail-spam-destination" :size="24" /></span>{{ notice }}</p>
     <div class="mail-layout" :class="{ 'message-open': selected }">
       <aside class="mail-list-panel">
-        <div class="mail-list-heading"><span class="mail-folder-title">{{ folders.find(f => f.id === folder)?.label }} <small>{{ filtered.length }}</small><button class="mail-icon" :disabled="busy" aria-label="Odśwież pocztę" title="Odśwież pocztę" @click="run(refresh)"><RefreshCw :size="17" /></button></span><div><button class="mail-icon" :disabled="busy" aria-label="Importuj wiadomość .eml" @click="importInput.click()" title="Importuj wiadomość .eml"><Upload :size="17" /></button><button class="mail-new" title="Napisz nową wiadomość" :disabled="busy" @click="compose()"><Plus :size="16" /> Napisz</button></div></div>
-        <div class="mail-time-range" role="group" aria-label="Zakres pobierania i listy wiadomości"><span>Ostatnie</span><button v-for="range in timeRanges" :key="range.hours" :disabled="busy" :aria-pressed="syncHours === range.hours" :title="`Pobierz i pokaż wiadomości z ostatnich ${range.label}`" @click="changeTimeRange(range.hours)">{{ range.label }}</button><RefreshCw v-if="busy" class="mail-range-loading" :size="14" aria-label="Wczytywanie poczty" /></div>
+        <div class="mail-list-heading"><span class="mail-folder-title">{{ unified ? 'Odebrana' : folders.find(f => f.id === folder)?.label }} <small>{{ filtered.length }}</small><button class="mail-icon" :disabled="busy" aria-label="Odśwież pocztę" title="Odśwież pocztę" @click="run(refresh)"><RefreshCw :size="17" /></button></span><div><button class="mail-icon" :disabled="busy" aria-label="Importuj wiadomość .eml" @click="importInput.click()" title="Importuj wiadomość .eml"><Upload :size="17" /></button><button class="mail-new" title="Nowa wiadomość do jednej osoby" aria-label="Nowa wiadomość do jednej osoby" :disabled="busy" @click="compose()"><Plus :size="12" /><Mail :size="17" /><UserRound :size="14" /></button><button class="mail-new" title="Nowa wiadomość do wielu osób" aria-label="Nowa wiadomość do wielu osób" :disabled="busy" @click="compose(null, 'group')"><Plus :size="12" /><Users :size="18" /></button></div></div>
+        <div class="mail-time-range" role="group" aria-label="Zakres pobierania i listy wiadomości"><button v-if="unified" :aria-pressed="unifiedHours === null" @click="showAllTime">Wszystkie</button><span v-else>Ostatnie</span><button v-for="range in timeRanges" :key="range.hours" :disabled="busy" :aria-pressed="unified ? unifiedHours === range.hours : syncHours === range.hours" :title="`Pobierz i pokaż wiadomości z ostatnich ${range.label}`" @click="changeTimeRange(range.hours)">{{ range.label }}</button><span class="mail-new-count" role="status" :aria-label="`Nowe nieprzeczytane wiadomości: ${unread}`" title="Nowe nieprzeczytane wiadomości"><Star :size="14" aria-hidden="true" />{{ unread }}</span><RefreshCw v-if="busy" class="mail-range-loading" :size="14" aria-label="Wczytywanie poczty" /></div>
         <input ref="importInput" type="file" accept=".eml" hidden aria-label="Plik wiadomości .eml" @change="importMail" />
         <div class="mail-message-list" :class="{ tiles: grid }" aria-label="Lista wiadomości">
           <article v-for="message in filtered" :key="message.id" class="mail-row" :class="{ selected: selectedId === message.id, unread: message.unread }">
-            <button class="mail-row-open" :title="`Otwórz wiadomość: ${message.subject || '(bez tematu)'}`" :disabled="busy" @click="open(message)"><span class="mail-sender-symbol" :class="'sender-' + mailSenderKind(message)" role="img" :aria-label="senderKinds[mailSenderKind(message)].label" :title="senderKinds[mailSenderKind(message)].hint"><component :is="senderKinds[mailSenderKind(message)].icon" :size="25" :stroke-width="1.7" aria-hidden="true" /></span><span class="mail-row-text"><strong>{{ folder === 'sent' || folder === 'drafts' ? message.recipient || 'Brak odbiorcy' : message.sender_name }}</strong><span v-if="message.company || message.government" class="mail-row-affiliations"><span v-if="message.company" class="mail-row-company" :title="`Firma: ${message.company.name}`"><Building2 :size="12" /><span>{{ message.company.name }}</span></span><span v-if="message.government" class="mail-row-government" :title="`Domena rządowa: ${message.government.domain} · ${message.government.country}. Autentyczność wiadomości niepotwierdzona.`"><Landmark :size="12" /><span>{{ message.government.suffix }} · {{ message.government.country }}</span></span></span><span>{{ message.subject || '(bez tematu)' }}</span><small>{{ message.content || 'Pusty szkic' }}</small></span></button>
-            <div class="mail-row-meta"><span v-if="message.category" class="mail-category" :class="message.category" :title="message.category_reason || categories[message.category]">{{ categories[message.category] }}</span><time :datetime="message.created_at">{{ date(message.created_at) }}</time><button class="mail-icon star" :class="{ starred: message.starred }" :disabled="busy" :aria-label="message.starred ? 'Usuń gwiazdkę' : 'Oznacz gwiazdką'" :aria-pressed="!!message.starred" @click="run(() => patch(message, { starred: !message.starred }))" :title="message.starred ? 'Usuń gwiazdkę' : 'Oznacz gwiazdką'"><Star :size="17" /></button><button class="mail-tag mail-row-label" :class="message.label || 'none'" :disabled="busy" :title="`Etykieta: ${labels[message.label] || 'Brak'}`" :aria-label="`Zmień etykietę: ${message.subject || '(bez tematu)'}`" popovertarget="mail-label-options" @click.stop="positionLabelMenu($event, message)">{{ labels[message.label] || 'Brak' }}</button><Paperclip v-if="message.attachments.length" :size="14" /></div>
+            <button class="mail-row-open" :title="`Otwórz wiadomość: ${message.subject || '(bez tematu)'}`" :disabled="busy" @click="open(message)"><span class="mail-sender-symbol" :class="'sender-' + mailSenderKind(message)" role="img" :aria-label="senderKinds[mailSenderKind(message)].label" :title="senderKinds[mailSenderKind(message)].hint"><component :is="senderKinds[mailSenderKind(message)].icon" :size="25" :stroke-width="1.7" aria-hidden="true" /></span><span class="mail-row-text"><strong>{{ message.center?.direction === 'outgoing' || folder === 'sent' || folder === 'drafts' ? message.recipient || 'Brak odbiorcy' : message.sender_name }}</strong><span v-if="message.company || message.government" class="mail-row-affiliations"><span v-if="message.company" class="mail-row-company" :title="`Firma: ${message.company.name}`"><Building2 :size="12" /><span>{{ message.company.name }}</span></span><span v-if="message.government" class="mail-row-government" :title="`Domena rządowa: ${message.government.domain} · ${message.government.country}. Autentyczność wiadomości niepotwierdzona.`"><Landmark :size="12" /><span>{{ message.government.suffix }} · {{ message.government.country }}</span></span></span><span>{{ message.subject || '(bez tematu)' }}</span><small>{{ message.content || 'Pusty szkic' }}</small></span></button>
+            <div class="mail-row-meta"><span class="mail-source" :class="sourceKind(message)" role="img" :aria-label="messageSources[sourceKind(message)].hint" :title="messageSources[sourceKind(message)].hint"><component :is="messageSources[sourceKind(message)].icon" :size="15" aria-hidden="true" />{{ messageSources[sourceKind(message)].label }}</span><span v-if="message.category" class="mail-category" :class="message.category" :title="message.category_reason || categories[message.category]">{{ categories[message.category] }}</span><time :datetime="message.created_at">{{ date(message.created_at) }}</time><button v-if="message.folder !== 'drafts' && message.folder !== 'sent' && message.center?.direction !== 'outgoing'" class="mail-icon star" :class="{ starred: message.unread }" :disabled="busy" :aria-label="message.unread ? 'Oznacz jako przeczytaną' : 'Oznacz jako nieprzeczytaną'" :aria-pressed="!!message.unread" @click.stop="run(() => setUnread(message, !message.unread))" :title="message.unread ? 'Nowa wiadomość — oznacz jako przeczytaną' : 'Oznacz jako nieprzeczytaną'"><Star :size="17" /></button><button v-if="isEmailMessage(message)" class="mail-tag mail-row-label" :class="message.label || 'none'" :disabled="busy" :title="`Etykieta: ${labels[message.label] || 'Brak'}`" :aria-label="`Zmień etykietę: ${message.subject || '(bez tematu)'}`" popovertarget="mail-label-options" @click.stop="positionLabelMenu($event, message)">{{ labels[message.label] || 'Brak' }}</button><Paperclip v-if="message.attachments.length" :size="14" /></div>
           </article>
           <div v-if="!filtered.length" class="mail-list-empty"><Inbox :size="35" /><h2>{{ busy ? 'Wczytywanie poczty…' : 'Brak wiadomości' }}</h2><p>{{ messages.length ? 'Zmień folder, filtr lub wyszukiwanie.' : 'Importuj wiadomość .eml lub napisz pierwszego maila.' }}</p><button v-if="!messages.length" :disabled="busy" title="Importuj plik EML z załącznikami" @click="importInput.click()"><Upload :size="16" /> Importuj .eml</button></div>
         </div>
       </aside>
       <section class="mail-reader" aria-label="Podgląd wiadomości">
         <template v-if="selected">
-          <div class="mail-reader-toolbar"><button class="mobile-back mail-icon" aria-label="Wróć do listy" @click="selectedId = null" title="Wróć do listy"><ChevronLeft :size="18" /></button><button :disabled="busy" title="Odpowiedz nadawcy wiadomości" @click="compose(selected, 'reply')"><Reply :size="17" /> Odpowiedz</button><button :disabled="busy" title="Przekaż treść wiadomości innemu odbiorcy" @click="compose(selected, 'forward')"><Forward :size="17" /> Przekaż dalej</button><button v-if="!selected.safe && !selected.company && !selected.spam_protected" class="mail-spam-button" :disabled="busy || !selected.sender_email" :title="selected.blocked ? 'Zezwól na nowe wiadomości od tego adresu' : 'Przenieś korespondencję od tego adresu do Spamu i blokuj kolejne wiadomości'" @click="spamSender"><ShieldAlert :size="17" />{{ selected.blocked ? 'Usuń ze spamu' : 'SPAM' }}</button><button :disabled="busy" aria-label="Przenieś do śmieci" @click="run(() => patch(selected, { folder: 'trash' }))" title="Przenieś do śmieci"><Trash2 :size="17" /></button><button :disabled="busy" aria-label="Archiwizuj" @click="run(() => patch(selected, { folder: 'archive' }))" title="Archiwizuj"><Archive :size="17" /></button></div>
+          <template v-if="!isEmailMessage(selected)">
+            <div class="mail-reader-toolbar"><button class="mobile-back mail-icon" aria-label="Wróć do listy" @click="selectedId = null"><ChevronLeft :size="18" /></button><span class="mail-source" :class="sourceKind(selected)" :title="messageSources[sourceKind(selected)].hint"><component :is="messageSources[sourceKind(selected)].icon" :size="16" />{{ messageSources[sourceKind(selected)].label }}</span><button v-if="selected.center.source === 'approval'" @click="emit('navigate', 'tasks')">Zadania i akceptacje</button><button v-else-if="selected.center.source === 'edelivery'" @click="emit('navigate', 'edelivery')">Rejestr eDoręczeń</button><button v-if="['portal', 'sms'].includes(sourceKind(selected)) && selected.center?.direction !== 'outgoing'" @click="compose(selected, 'reply')"><Reply :size="17" />Odpowiedz</button><button v-if="!isSpamMessage(selected) && !['sent', 'drafts'].includes(selected.folder) && selected.center?.direction !== 'outgoing'" class="mail-task-add" :disabled="busy" aria-label="Dodaj zadanie" title="Dodaj zadanie z tej wiadomości" @click="taskMessage = selected"><ClipboardPlus :size="18" /></button></div>
+            <div class="mail-reader-content">
+              <div class="mail-sender"><span class="mail-avatar tone-0">{{ initials(selected) }}</span><div><strong>{{ selected.sender_name }}</strong><small>Do: {{ selected.recipient }}</small><small v-if="sourceKind(selected) === 'portal'">Wiadomość przez portal — bez e-maila</small><small v-else-if="selected.center.address">{{ selected.center.address }}</small></div><time>{{ fullDate(selected.created_at) }}</time></div>
+              <div class="mail-subject"><h2>{{ selected.subject || '(bez tematu)' }}</h2></div>
+              <div class="mail-body">{{ selected.content || 'Brak dodatkowej treści.' }}</div>
+              <p v-if="selected.center.filename" class="ai-footnote">Plik do akceptacji: {{ selected.center.filename }}. Otwórz zadania i akceptacje, aby sprawdzić dokument.</p>
+              <p v-if="selected.center.reference" class="ai-footnote">Numer przesyłki: {{ selected.center.reference }}</p>
+              <p v-if="selected.center.error" class="mail-error">{{ selected.center.error }}</p>
+              <p v-if="selected.center.source === 'edelivery'" class="ai-footnote">Dane z rejestru eDoręczeń. Treść i dokumenty przesyłki sprawdzisz w skrzynce operatora.</p>
+            </div>
+          </template>
+          <template v-else>
+          <div class="mail-reader-toolbar"><button class="mobile-back mail-icon" aria-label="Wróć do listy" @click="selectedId = null" title="Wróć do listy"><ChevronLeft :size="18" /></button><button :disabled="busy" title="Odpowiedz nadawcy wiadomości" @click="compose(selected, 'reply')"><Reply :size="17" /> Odpowiedz</button><button :disabled="busy" title="Przekaż treść wiadomości innemu odbiorcy" @click="compose(selected, 'forward')"><Forward :size="17" /> Przekaż dalej</button><button v-if="!selected.safe && !selected.company && !selected.spam_protected" class="mail-spam-button" :disabled="busy || !selected.sender_email" :title="selected.blocked ? 'Zezwól na nowe wiadomości od tego adresu' : 'Przenieś korespondencję od tego adresu do Spamu i blokuj kolejne wiadomości'" @click="spamSender"><ShieldAlert :size="17" />{{ selected.blocked ? 'Usuń ze spamu' : 'SPAM' }}</button><button :disabled="busy" aria-label="Przenieś do śmieci" @click="run(() => patch(selected, { folder: 'trash' }))" title="Przenieś do śmieci"><Trash2 :size="17" /></button><button :disabled="busy" aria-label="Archiwizuj" @click="run(() => patch(selected, { folder: 'archive' }))" title="Archiwizuj"><Archive :size="17" /></button><button v-if="!isSpamMessage(selected) && !['sent', 'drafts'].includes(selected.folder) && selected.center?.direction !== 'outgoing'" class="mail-task-add" :disabled="busy" aria-label="Dodaj zadanie" title="Dodaj zadanie z tej wiadomości" @click="taskMessage = selected"><ClipboardPlus :size="18" /></button></div>
           <div class="mail-reader-content">
           <p v-if="selected.phishing_warning || (!selected.safe && selected.category_reason?.startsWith('Podejrzenie phishingu:'))" class="mail-phishing-warning" role="alert"><ShieldAlert :size="20" /><span>{{ selected.phishing_warning || selected.category_reason }}</span></p>
           <div class="mail-sender"><span class="mail-avatar tone-0">{{ initials(selected) }}</span><div><small>Od: {{ selected.sender_name }}</small>
@@ -335,19 +443,21 @@ onMounted(async () => { await run(async () => { try { await scanSpam() } catch (
 
           </div>
         </template>
+          </template>
         <div v-else class="mail-reader-empty"><span><Mail :size="42" /></span><h2>Miejsce na Twoją korespondencję</h2><p>Wybierz wiadomość, aby przeczytać jej treść,<br />pobrać załączniki i przygotować odpowiedź.</p><button class="primary" title="Utwórz nową wiadomość e-mail" @click="compose()"><Plus :size="17" /> Nowa wiadomość</button></div>
       </section>
       <aside class="mail-ai mail-side-panel" aria-label="Załączniki i działania wiadomości">
-        <template v-if="selected">
+        <section v-if="selected && !isEmailMessage(selected)" class="mail-source-details"><h2>Źródło wiadomości</h2><span class="mail-source" :class="sourceKind(selected)"><component :is="messageSources[sourceKind(selected)].icon" :size="16" />{{ messageSources[sourceKind(selected)].label }}</span><p class="ai-footnote">{{ messageSources[sourceKind(selected)].hint }}</p></section>
+        <template v-if="selected && isEmailMessage(selected)">
           <section class="mail-side-attachments" aria-label="Załączniki wiadomości"><h2><Paperclip :size="18" /> Załączniki <small>{{ selected.attachments.length }}</small></h2>
             <p v-if="selected.attachments_blocked" class="mail-side-empty">Załączniki spamu nie są pobierane ani zapisywane. Aby uzyskać dostęp do pliku, najpierw przywróć wiadomość do Odebranych.</p>
             <div v-else-if="selected.attachments.length" class="mail-attachments">
               <div v-for="part in selected.attachments" :key="part.id" class="mail-attachment-card"><div class="mail-file-description"><FileText class="attachment-icon" :size="23" /><span>{{ part.name }}<small>{{ size(part.size) }}</small></span></div><div class="mail-file-actions"><button :disabled="busy" :aria-label="`Pobierz na komputer: ${part.name}`" :title="`Pobierz na komputer: ${part.name}`" @click="download(part)"><Download :size="18" /></button><button :disabled="busy || driveSaving" :aria-label="`Zapisz na Dysku portalu: ${part.name}`" :title="`Zapisz na Dysku portalu: ${part.name}`" @click="openDriveDialog(part)"><HardDrive :size="18" /></button></div></div>
               <button class="mail-save-all" :disabled="busy || driveSaving" title="Wybierz katalog na Dysku portalu i zapisz wszystkie załączniki" @click="openDriveDialog()"><HardDrive :size="16" /> Zapisz wszystkie na Dysku</button>
-            </div><p v-else class="mail-side-empty">Ta wiadomość nie ma załączników.</p>
+            </div><p v-else-if="!selected" class="mail-side-empty">Ta wiadomość nie ma załączników.</p>
           </section>
-        </template><p v-else class="mail-side-empty">Wybierz wiadomość, aby zobaczyć załączniki.</p>
-        <details v-if="selected" class="mail-group ai-group">
+        </template><p v-else-if="!selected" class="mail-side-empty">Wybierz wiadomość, aby zobaczyć załączniki.</p>
+        <details v-if="selected && isEmailMessage(selected)" class="mail-group ai-group">
           <summary title="Rozwiń lub zwiń analizę wiadomości przez AI"><Sparkles :size="20" /><span>Analiza AI</span><ChevronLeft class="group-chevron" :size="17" /></summary>
           <div class="mail-group-content"><template v-if="currentAnalysis"><div class="ai-card"><h3><Pin :size="17" /> Podsumowanie</h3><p>{{ currentAnalysis.summary }}</p></div><div class="ai-card priority-card"><h3><AlertCircle :size="17" /> Priorytet <span class="mail-tag" :class="currentAnalysis.priority === 'high' ? 'urgent' : 'info'">{{ currentAnalysis.priority === 'high' ? 'Wysoki' : 'Normalny' }}</span></h3></div><div class="ai-card"><h3><CheckSquare :size="17" /> Wykryte zadania</h3><ul v-if="currentAnalysis.tasks.length"><li v-for="task in currentAnalysis.tasks" :key="task">{{ task }}</li></ul><p v-else>Nie wykryto zadań.</p></div><div v-if="selected?.attachments.length" class="ai-card"><h3><Paperclip :size="17" /> Załączniki</h3><span v-for="part in selected.attachments" :key="part.id" class="ai-attachment">{{ part.name }}</span></div><div class="ai-card"><h3><Lightbulb :size="18" /> Proponowana odpowiedź</h3><p class="ai-reply">{{ currentAnalysis.reply }}</p><button class="ai-action" :disabled="busy" title="Wstaw propozycję AI do nowego szkicu odpowiedzi" @click="useReply"><Reply :size="17" /> Użyj odpowiedzi</button></div></template>
         <div v-else class="ai-intro"><span class="ai-orb"><Sparkles :size="30" /></span><h3>Mniej czytania.<br />Więcej konkretów.</h3><p>Podsumowanie, priorytet, zadania i propozycja odpowiedzi w jednym miejscu.</p></div>
@@ -356,8 +466,8 @@ onMounted(async () => { await run(async () => { try { await scanSpam() } catch (
         </details>
       </aside>
     </div>
+    <MailTaskDialog v-if="taskMessage" :key="taskMessage.id" :api="api" :message="taskMessage" :current-user="currentUser" :smtp-configured="!!settings?.smtp?.configured" @close="taskMessage = null" @created="emit('task-created')" @completed="notice = $event" />
     <div id="mail-label-options" ref="labelPopup" popover="auto" role="group" aria-label="Wybierz etykietę" class="mail-label-popup" :style="labelPopupStyle"><button :disabled="busy" :aria-pressed="!labelTarget?.label" @click="chooseLabel('')"><span class="mail-label-dot none"></span>Brak<span v-if="!labelTarget?.label" class="mail-label-check">✓</span></button><button v-for="(name, key) in labelChoices" :key="key" :disabled="busy" :aria-pressed="labelTarget?.label === key" @click="chooseLabel(key)"><span class="mail-label-dot" :class="key"></span>{{ name }}<span v-if="labelTarget?.label === key" class="mail-label-check">✓</span></button></div>
-    <MailSettings v-if="showSettings" :api="api" :initial="settings" @close="showSettings = false" @saved="settings = $event" />
     <div v-if="driveDialog" class="mail-modal" @keydown.esc="closeDriveDialog"><form class="mail-dialog mail-drive-dialog" role="dialog" aria-modal="true" aria-labelledby="mail-drive-title" @submit.prevent="saveToDrive"><header><h2 id="mail-drive-title"><HardDrive :size="21" /> Zapisz załączniki na Dysku</h2><button type="button" class="mail-icon" :disabled="driveSaving" title="Zamknij wybór katalogu" aria-label="Zamknij wybór katalogu" @click="closeDriveDialog"><X :size="20" /></button></header>
       <p v-if="driveLoading" role="status">Wczytywanie katalogów Dysku…</p><p v-if="driveError" class="mail-error" role="alert">{{ driveError }}</p>
       <template v-if="!driveLoading"><fieldset :disabled="driveSaving"><legend>Załączniki do zapisania</legend><label v-for="part in driveDialog.attachments" :key="part.id" class="mail-drive-file"><input v-model="driveDialog.chosen" type="checkbox" :value="part.id" :disabled="driveDialog.saved.some(item => item.id === part.id)" /><span>{{ part.name }}<small>{{ driveDialog.saved.some(item => item.id === part.id) ? 'Zapisano na Dysku' : size(part.size) }}</small></span></label></fieldset>
@@ -367,11 +477,26 @@ onMounted(async () => { await run(async () => { try { await scanSpam() } catch (
       <p class="ai-footnote">Zapis do „Mojego dysku” w portalu. Pliki będą dostępne dla osób z uprawnieniami do wybranego katalogu.</p><ul v-if="driveDialog.saved.length" class="mail-drive-saved"><li v-for="item in driveDialog.saved" :key="item.id">{{ item.name }} — {{ item.path }}</li></ul></template>
       <p v-if="driveSaving" role="status">Zapisywanie załączników… Zapisano: {{ driveDialog.saved.length }}.</p><footer><button type="button" :disabled="driveSaving" @click="closeDriveDialog">Anuluj</button><button class="primary" :disabled="!canSaveToDrive"><HardDrive :size="17" />{{ driveSaving ? 'Zapisywanie…' : `Zapisz na Dysku (${driveDialog.chosen.length})` }}</button></footer></form></div>
     <div v-if="companyEditor" class="mail-modal"><form class="mail-dialog company-dialog" role="dialog" aria-modal="true" aria-labelledby="company-title" @submit.prevent="saveCompany"><header><h2 id="company-title">Przypisz firmę</h2><button type="button" class="mail-icon" :disabled="busy" aria-label="Zamknij przypisanie firmy" title="Zamknij przypisanie firmy" @click="companyEditor = null"><X :size="20" /></button></header><p v-if="error" class="mail-error" role="alert">{{ error }}</p><p class="company-address">{{ companyEditor.address }}</p><label>Zakres przypisania<select v-model="companyEditor.scope" :disabled="busy"><option value="email">Tylko ten adres e-mail</option><option value="domain">Wszystkie adresy w tej domenie</option></select></label><label>Firma ze słownika<select v-model="companyEditor.entry_id" :disabled="busy"><option value="">Dodaj nową firmę</option><option v-for="item in companies" :key="item.id" :value="item.id">{{ item.name || '(bez nazwy)' }}</option></select></label><label v-if="!companyEditor.entry_id">Nazwa firmy<input v-model="companyEditor.name" required maxlength="200" :disabled="busy" placeholder="np. Biuro Rachunkowe Kowalski" /></label><p class="ai-footnote">Nowa firma zostanie dopisana do słownika Firmy. Jeśli słownika nie ma, powstanie automatycznie. Powiązane wiadomości zostaną uznane za bezpieczne, a te w Spamie wrócą do Odebranych. Osobne przypisanie adresu ma pierwszeństwo przed domeną.</p><footer><button v-if="companyEditor.linkedCompany" type="button" class="mail-unlink-company" :disabled="busy" aria-label="Usuń przypisanie firmy" title="Usuń przypisanie tylko tego adresu e-mail do firmy" @click="removeCompany"><Building2 :size="16" /> Usuń powiązanie</button><button type="button" :disabled="busy" @click="companyEditor = null">Anuluj</button><button class="primary" title="Zapisz przypisanie nadawcy do firmy" :disabled="busy"><Building2 :size="17" /> Zapisz przypisanie</button></footer></form></div>
-    <div v-if="composer" class="mail-modal"><form class="mail-dialog compose-dialog" role="dialog" aria-modal="true" aria-labelledby="compose-title" @submit.prevent="send"><header><h2 id="compose-title">{{ composer.id ? 'Wiadomość robocza' : 'Nowa wiadomość' }}</h2><button type="button" class="mail-icon" :disabled="busy" aria-label="Zamknij wiadomość" @click="composer = null" title="Zamknij wiadomość"><X :size="20" /></button></header><p v-if="error" class="mail-error" role="alert">{{ error }}</p><label>Do<input v-model="composer.recipient" type="email" maxlength="254" required :disabled="busy" placeholder="adres@firma.pl" /></label><label>Temat<input v-model="composer.subject" maxlength="200" required :disabled="busy" /></label><label>Wiadomość<textarea v-model="composer.content" rows="12" maxlength="100000" required :disabled="busy" /></label><p v-if="!settings?.smtp.configured" class="ai-footnote">Wysyłanie wymaga konfiguracji SMTP na serwerze. Możesz zapisać szkic.</p><p class="ai-footnote">Przekazywanie kopiuje treść wiadomości. Wysyłanie załączników nie jest jeszcze dostępne.</p><footer><button type="button" :disabled="busy" title="Zapisz treść w folderze Robocze" @click="save"><FileText :size="17" /> Zapisz szkic</button><button class="primary" title="Wyślij wiadomość przez SMTP" :disabled="busy || !settings?.smtp.configured"><Send :size="17" />{{ busy ? 'Zapisywanie…' : 'Wyślij' }}</button></footer></form></div>
+    <ChannelMessageDialog v-if="composer && (composerChannel !== 'email' || composerDictionaryMode)" :key="composerChannel" :api="api" :channel="composerChannel" :group="composerDictionaryMode" :reply="composerReply" :initial-recipient-id="composer.recipientId" :initial-subject="composer.subject" :initial-content="composer.content" :initial-recipient="composer.recipient" @close="composer = null" @switch-channel="switchComposeChannel" @manual-email="switchComposeChannel" @sent="notice = $event; composer = null" />
+    <div v-if="composer && composerChannel === 'email' && !composerDictionaryMode" class="mail-modal"><form class="mail-dialog compose-dialog" role="dialog" aria-modal="true" aria-labelledby="compose-title" @submit.prevent="send">
+      <header><div class="single-compose-heading"><span class="single-compose-emblem"><Send :size="22" /></span><div><h2 id="compose-title">{{ composerReply ? 'Odpowiedź' : composer.id ? 'Wiadomość robocza' : 'Nowa wiadomość' }}</h2><p>{{ composerReply ? 'Odpowiedz i pozostań w kontakcie.' : 'Kilka słów, które trafią we właściwe miejsce.' }}</p></div></div><button type="button" class="mail-icon" :disabled="busy" aria-label="Zamknij wiadomość" @click="composer = null"><X :size="19" /></button></header>
+      <div class="single-compose-body">
+      <div class="single-compose-row"><label for="single-recipient">Do:</label><div class="recipient-autocomplete" @focusout="!$event.currentTarget.contains($event.relatedTarget) && (composeSuggestionsOpen = false)"><input id="single-recipient" v-model="composer.recipient" type="email" role="combobox" aria-autocomplete="list" aria-controls="email-recipient-suggestions" :aria-expanded="composeSuggestionsOpen && matchingComposeSuggestions.length > 0" maxlength="254" required :disabled="busy" autocomplete="off" placeholder="Wpisz adres e-mail lub nazwę kontaktu" @focus="composeSuggestionsOpen = true; loadComposeSuggestions()" @input="composeSuggestionsOpen = true" @keydown.esc.stop="composeSuggestionsOpen = false" @keydown.down.prevent="$event.currentTarget.parentElement.querySelector('[role=option]')?.focus()" /><div v-if="composeSuggestionsOpen && matchingComposeSuggestions.length" id="email-recipient-suggestions" class="recipient-autocomplete-results" role="listbox" aria-label="Podpowiedzi odbiorców"><button v-for="person in matchingComposeSuggestions" :key="person.channels.email" type="button" role="option" :aria-selected="composer.recipient === person.channels.email" @click="chooseComposeSuggestion(person)" @keydown.esc.stop="composeSuggestionsOpen = false"><UserRound :size="16" /><span><strong>{{ person.name }}</strong><small>{{ person.channels.email }}</small></span></button></div></div></div>
+      <p v-if="composeSuggestionsError" class="ai-footnote">{{ composeSuggestionsError }}</p>
+      <div class="compose-source"><span>Źródło:</span><div class="single-channel-options" role="group" aria-label="Źródło wiadomości"><button v-for="option in [{ value: 'email', label: 'Email', icon: Mail }, { value: 'sms', label: 'SMS', icon: MessageSquare }, { value: 'user', label: 'Portal', icon: Users }]" :key="option.value" type="button" :aria-pressed="composerChannel === option.value" :disabled="busy || composerReply" @click="switchComposeChannel({ channel: option.value, subject: composer.subject, content: composer.content, recipient: '' })"><component :is="option.icon" :size="16" />{{ option.label }}<span v-if="composerChannel === option.value" class="single-channel-dot" aria-hidden="true"></span></button></div><small v-if="composerReply">Ustawione zgodnie z wiadomością, na którą odpowiadasz.</small></div>
+      <p v-if="error" class="mail-error" role="alert">{{ error }}</p><label class="single-compose-row">Temat:<input v-model="composer.subject" maxlength="200" required :disabled="busy" placeholder="Temat wiadomości" /></label><label class="single-compose-content">Treść:<textarea v-model="composer.content" rows="9" maxlength="100000" required :disabled="busy" placeholder="Napisz swoją wiadomość…" /><small>{{ composer.content.length.toLocaleString('pl') }} znaków</small></label>
+      <p v-if="!settings?.smtp.configured" class="ai-footnote">Wysyłanie wymaga konfiguracji SMTP na serwerze. Możesz zapisać szkic.</p>
+      </div>
+      <footer><span class="single-compose-footer-note"><Mail :size="15" />Email</span><button type="button" class="single-save-draft" :disabled="busy" title="Zapisz treść w folderze Robocze" @click="save"><FileText :size="16" /> Zapisz szkic</button><button class="primary" title="Wyślij wiadomość przez SMTP" :disabled="busy || !settings?.smtp.configured"><Send :size="16" />{{ busy ? 'Zapisywanie…' : 'Wyślij' }}</button></footer>
+    </form></div>
   </section>
 </template>
 
 <style scoped>
+.compose-source select { max-width:180px; }.compose-source small { color:var(--muted); font-size:10px; }.mail-new { display:inline-flex; align-items:center; gap:3px; }.compose-dialog header h2 { font-size:18px; }
+.mail-dictionary-pick { justify-self:start; color:var(--accent); border:0; padding:0; margin:0 0 14px; background:transparent; font-size:12px; }
+.mail-time-range > .mail-new-count { display:inline-flex; align-items:center; gap:5px; margin:0 0 0 3px; color:#eeab24; font-size:12px; font-weight:600; white-space:nowrap; }
+.mail-new-count svg { fill:currentColor; }
 .client-mail { --mail-blue:#086cff; --mail-blue-soft:color-mix(in srgb,var(--mail-blue) 9%,var(--surface)); font-size:13px; color:var(--text); }
 .mail-header { display:flex; justify-content:flex-end; gap:20px; align-items:center; margin:0 0 24px; flex-wrap:wrap; }
 .mail-title { display:flex; gap:12px; align-items:center; }.mail-title h1 { font-size:25px; letter-spacing:-.8px; margin:0 0 4px; }.mail-title small { color:var(--muted); font-size:11px; }.mail-logo { display:flex; background:var(--mail-blue); color:white; padding:11px; border-radius:12px; box-shadow:0 5px 15px #086cff20; }
@@ -446,7 +571,15 @@ onMounted(async () => { await run(async () => { try { await scanSpam() } catch (
 .mail-drive-dialog > label { display:grid; gap:7px; font-size:12px; }.mail-drive-dialog fieldset { margin:0; padding:12px; border:1px solid var(--border); border-radius:10px; min-width:0; }.mail-drive-dialog legend { padding:0 5px; font-size:12px; }
 .mail-drive-file { display:flex; flex-direction:row; align-items:center; gap:10px; padding:8px 0; }.mail-drive-file input { width:16px; height:16px; flex-shrink:0; }.mail-drive-file span { min-width:0; overflow-wrap:anywhere; font-size:12px; }.mail-drive-file small { display:block; font-size:10px; color:var(--secondary); margin-top:4px; }
 .mail-drive-new { justify-self:start; font-size:12px; }.mail-drive-dialog footer { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; }.mail-drive-saved { font-size:11px; line-height:1.8; padding-left:20px; overflow-wrap:anywhere; }
-.mail-title-line { display:flex; align-items:center; gap:10px; }.mail-title-line h1 { margin:0; }.mail-title-line button { padding:6px; border:0; background:transparent; color:var(--secondary); border-radius:8px; }
+.mail-title > div { min-width:0; }.mail-logo { flex-shrink:0; }
+.mail-source { display:inline-flex; align-items:center; gap:4px; padding:4px 6px; border-radius:6px; font-size:9px; line-height:1.4; color:var(--mail-blue); background:var(--mail-blue-soft); white-space:nowrap; }
+.mail-source svg { flex-shrink:0; }
+.mail-source.portal { color:var(--accent); background:var(--accent-soft); }
+.mail-source.sms { color:var(--success); background:var(--success-soft); }
+.mail-source.edelivery { color:var(--warning); background:var(--warning-soft); }
+.mail-source.other { color:var(--muted); background:var(--surface-soft); }
+.mail-row-meta { max-width:104px; }
+.mail-title-line { display:flex; align-items:center; gap:10px; }.mail-title-line h1 { margin:0; min-width:0; overflow-wrap:anywhere; }.mail-title-line button { flex-shrink:0; padding:6px; border:0; background:transparent; color:var(--secondary); border-radius:8px; }
 .mail-folder-title { display:flex; align-items:center; gap:6px; }.mail-folder-title small { margin:0; }
 .mail-inline-label { display:flex; flex-direction:row; flex-wrap:wrap; align-items:center; gap:8px; margin:8px 0 3px; font-size:11px; color:var(--secondary); }
 .mail-label-trigger { padding:5px 9px; gap:8px; font-size:11px; background:var(--surface-soft); border-color:transparent; border-radius:7px; }.mail-label-trigger > svg { transform:rotate(-90deg); }.mail-label-trigger.urgent { color:var(--theme-danger,#ba253b); background:color-mix(in srgb,#ff637d 12%,var(--surface)); }.mail-label-trigger.invoice { color:var(--success); background:var(--success-soft); }.mail-label-trigger.offer { color:var(--accent); background:var(--accent-soft); }
@@ -487,4 +620,14 @@ onMounted(async () => { await run(async () => { try { await scanSpam() } catch (
   .mail-list-heading, .mail-reader-toolbar { flex-shrink:0; }
   .mail-ai { min-height:0; overflow-y:auto; }
 }
+.mail-dialog.compose-dialog { display:flex; flex-direction:column; box-sizing:border-box; gap:0; width:min(640px,100%); padding:0; border-radius:22px; border:1px solid var(--border); box-shadow:0 24px 90px #14213b30; }
+.compose-dialog header { padding:23px 26px; margin:0; gap:12px; border-bottom:1px solid var(--border); background:linear-gradient(110deg,color-mix(in srgb,var(--accent) 4%,var(--surface)),var(--surface) 80%); }.single-compose-heading { display:flex; align-items:center; gap:13px; min-width:0; }.single-compose-emblem { display:grid; place-items:center; width:44px; height:44px; flex-shrink:0; border-radius:14px; color:var(--accent); background:var(--accent-soft); }.compose-dialog .single-compose-heading h2 { font-size:18px; letter-spacing:-.35px; font-weight:600; line-height:1.4; }.single-compose-heading p { margin:5px 0 0; color:var(--muted); font-size:11px; }.compose-dialog header .mail-icon { display:grid; place-items:center; color:var(--muted); padding:8px; }.compose-dialog header .mail-icon:hover { background:var(--surface-soft); }
+.single-compose-body { display:grid; gap:18px; padding:24px 26px; }.compose-dialog .single-compose-body label,.compose-dialog .compose-source { display:grid; gap:8px; margin:0; color:var(--secondary); font-size:12px; font-weight:500; }.compose-dialog input,.compose-dialog textarea { box-sizing:border-box; width:100%; padding:11px 13px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--text); font-size:12px; font-weight:400; outline:none; box-shadow:none; transition:border-color .15s,box-shadow .15s; }.compose-dialog input:focus,.compose-dialog textarea:focus { border-color:color-mix(in srgb,var(--accent) 55%,var(--border)); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent); }.compose-dialog input::placeholder,.compose-dialog textarea::placeholder { color:var(--muted); font-weight:400; }
+.single-channel-options { display:flex; flex-wrap:wrap; gap:8px; }.single-channel-options button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-width:96px; padding:10px 13px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--muted); font-size:12px; }.single-channel-options button[aria-pressed="true"] { color:var(--accent); background:var(--accent-soft); border-color:color-mix(in srgb,var(--accent) 28%,var(--border)); }.single-channel-dot { width:5px; height:5px; margin-left:3px; background:currentColor; border-radius:50%; }.compose-dialog .compose-source small { color:var(--muted); font-size:10px; font-weight:400; }.compose-dialog .single-compose-content { position:relative; }.compose-dialog textarea { min-height:200px; padding:14px 15px 30px; line-height:1.8; resize:vertical; }.single-compose-content > small { position:absolute; bottom:10px; right:12px; padding-left:5px; background:var(--surface); color:var(--muted); font-size:10px; font-weight:400; pointer-events:none; }.compose-dialog .ai-footnote { margin:0; font-size:10px; }
+.compose-dialog footer { position:sticky; bottom:0; z-index:1; align-items:center; flex-wrap:wrap; padding:17px 26px; border-top:1px solid var(--border); background:var(--surface); }.single-compose-footer-note { display:flex; align-items:center; gap:7px; margin-right:auto; color:var(--muted); font-size:11px; }.single-compose-footer-note svg { color:var(--accent); }.compose-dialog footer button { display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:11px 15px; border-radius:10px; font-size:12px; }.compose-dialog footer .single-save-draft { color:var(--secondary); border:1px solid var(--border); background:var(--surface); }.compose-dialog footer .primary { padding-inline:20px; box-shadow:0 3px 9px color-mix(in srgb,var(--accent) 14%,transparent); }.compose-dialog footer .primary:disabled { box-shadow:none; }
+@media(max-width:650px) { .mail-dialog.compose-dialog { max-height:95dvh; border-radius:17px; }.compose-dialog header { padding:19px 18px; }.single-compose-emblem { width:38px; height:38px; border-radius:12px; }.single-compose-heading { gap:10px; }.compose-dialog .single-compose-heading h2 { font-size:16px; }.single-compose-heading p { font-size:10px; }.single-compose-body { padding:20px 18px; gap:17px; }.single-channel-options { gap:6px; }.single-channel-options button { flex:1; min-width:0; padding:10px 9px; }.compose-dialog footer { padding:15px 18px; gap:8px; }.compose-dialog footer button { padding:10px 11px; }.compose-dialog footer .primary { padding-inline:15px; } }
+@media(prefers-reduced-motion:reduce) { .compose-dialog input,.compose-dialog textarea { transition:none; } }
+
+.compose-dialog .single-compose-row,.compose-dialog .compose-source { display:grid; grid-template-columns:58px minmax(0,1fr); align-items:center; gap:10px; }.single-compose-row > label { display:block; color:var(--secondary); font-size:12px; }.compose-dialog .compose-source > small { grid-column:2; }.recipient-autocomplete { position:relative; min-width:0; }.recipient-autocomplete-results { position:absolute; left:0; right:0; top:calc(100% + 6px); z-index:5; max-height:260px; overflow:auto; padding:5px; border:1px solid var(--border); border-radius:11px; background:var(--surface); box-shadow:0 12px 30px #14213b18; }.recipient-autocomplete-results button { display:flex; align-items:center; gap:10px; width:100%; padding:10px; border:0; border-radius:7px; background:transparent; text-align:left; color:var(--text); }.recipient-autocomplete-results button:hover,.recipient-autocomplete-results button:focus { background:var(--accent-soft); outline:none; }.recipient-autocomplete-results svg { color:var(--accent); flex-shrink:0; }.recipient-autocomplete-results span { min-width:0; }.recipient-autocomplete-results strong,.recipient-autocomplete-results small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.recipient-autocomplete-results strong { font-size:12px; font-weight:500; }.recipient-autocomplete-results small { margin-top:3px; color:var(--muted); font-size:11px; }
+@media(max-width:450px) { .compose-dialog .single-compose-row,.compose-dialog .compose-source { grid-template-columns:45px minmax(0,1fr); gap:8px; }.single-channel-options { gap:4px; }.single-channel-options button { gap:5px; padding:9px 6px; font-size:11px; }.single-channel-dot { display:none; } }
 </style>

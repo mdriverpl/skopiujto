@@ -7,9 +7,10 @@ import { ref } from 'vue'
 const compiled = compileScript(parse(readFileSync(new URL('./EDeliverySettings.vue', import.meta.url), 'utf8')).descriptor,
   { id: 'connection-test' }).content.replace(/^import .*$/gm, '').replace('export default', 'globalThis.component =')
 function settings(api, initial = {}) {
-  const events = [], context = { ref, onMounted() {}, window: { confirm: () => true } }
+  const events = [], mounted = [], context = { ref, onMounted: callback => mounted.push(callback), window: { confirm: () => true } }
   runInNewContext(compiled, context)
   const state = context.component.setup({ api, initial }, { expose() {}, emit: (...args) => events.push(args) })
+  state.mount = async () => { for (const callback of mounted) await callback() }
   return { state, events }
 }
 test('save clears secret fields and sends test only after successful persistence', async () => {
@@ -42,4 +43,60 @@ test('blank existing secret fields preserve stored material and password', async
   assert.equal(body.certificate, null)
   assert.equal(body.key_password, null)
   assert.equal(body.version, 2)
+})
+
+test('standalone page loads account configuration and keeps stored credentials blank', async () => {
+  const calls = []
+  const { state } = settings(async (path, method) => {
+    calls.push([path, method])
+    return { enabled: true, address: 'AE:PL-test', system_name: 'Portal', version: 4, has_certificate: true, has_private_key: true }
+  }, null)
+  await state.save()
+  assert.equal(calls.length, 0)
+  await state.mount()
+  assert.deepEqual(calls, [['/edeliveries/connection', undefined]])
+  assert.equal(state.loaded.value, true)
+  assert.equal(state.form.value.address, 'AE:PL-test')
+  assert.equal(state.form.value.version, 4)
+  assert.equal(state.form.value.has_private_key, true)
+  assert.equal(state.form.value.private_key, '')
+  assert.equal(state.form.value.certificate, '')
+})
+
+test('failed initial load prevents overwriting configuration and can be retried', async () => {
+  let fail = true
+  const calls = []
+  const { state } = settings(async (path, method) => {
+    calls.push([path, method])
+    if (fail) throw new Error('Brak połączenia')
+    return { enabled: true, address: 'AE:PL-test', version: 2 }
+  }, null)
+  await state.mount()
+  await state.save()
+  await state.disconnect()
+  assert.equal(calls.length, 1)
+  assert.equal(state.loaded.value, false)
+  assert.match(state.error.value, /Brak połączenia/)
+  fail = false
+  await state.load()
+  assert.equal(state.loaded.value, true)
+  assert.equal(state.form.value.version, 2)
+  assert.equal(state.error.value, '')
+})
+
+test('disconnect clears the configuration and secret fields while keeping the settings page open', async () => {
+  const calls = []
+  const { state, events } = settings(async (path, method) => { calls.push([path, method]); return {} }, { enabled: true, version: 3 })
+  state.form.value.private_key = 'unsaved-key'
+  state.form.value.certificate = 'unsaved-certificate'
+  state.form.value.key_password = 'password'
+  await state.disconnect()
+  assert.deepEqual(calls, [['/edeliveries/connection', 'DELETE']])
+  assert.equal(state.form.value.enabled, false)
+  assert.equal(state.form.value.version, 0)
+  assert.equal(state.form.value.private_key, '')
+  assert.equal(state.form.value.certificate, '')
+  assert.equal(state.form.value.key_password, '')
+  assert.match(state.notice.value, /odłączona/)
+  assert.equal(events.some(event => event[0] === 'close'), false)
 })

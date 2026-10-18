@@ -7,7 +7,8 @@ from typing import Literal
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from backend import access, mailing
+from backend import access, mailing, mailer, mail_settings, message_center, mail_rules
+from email_validator import validate_email, EmailNotValidError
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS user_tasks(
@@ -27,6 +28,12 @@ def initialize(con):
     con.executescript(SCHEMA)
     if 'folder_id' not in database.columns(con, 'user_tasks'):
         con.execute('ALTER TABLE user_tasks ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL')
+    columns = database.columns(con, 'user_tasks')
+    for name, definition in [('source_mail_id', 'TEXT'), ('source_message_id', 'TEXT'),
+                             ('notification_email', "TEXT NOT NULL DEFAULT ''"),
+                             ('notification_subject', "TEXT NOT NULL DEFAULT ''")]:
+        if name not in columns:
+            con.execute(f'ALTER TABLE user_tasks ADD COLUMN {name} {definition}')
 
 
 class TaskInput(BaseModel):
@@ -37,9 +44,13 @@ class TaskInput(BaseModel):
     document_id: str | None = Field(default=None, max_length=100)
     folder_id: str | None = Field(default=None, max_length=100)
     due_at: datetime | None = None
+    source_mail_id: str | None = Field(default=None, min_length=1, max_length=100)
+    source_message_id: str | None = Field(default=None, min_length=1, max_length=300)
 
     @model_validator(mode='after')
     def single_resource(self):
+        if self.source_mail_id and self.source_message_id:
+            raise ValueError('Wybierz jedną wiadomość źródłową.')
         if self.document_id is not None and self.folder_id is not None:
             raise ValueError('Wybierz plik albo katalog.')
         if self.document_id == '' or self.folder_id == '':
@@ -65,8 +76,42 @@ class StatusInput(BaseModel):
 
 
 def install(app, db, user, owned, now):
+    def source_message(con, row):
+        if row['source_mail_id']:
+            source = con.execute('''SELECT id,folder,subject,content,sender_name,sender_email,recipient,created_at
+                FROM client_mail WHERE id=? AND user_id=?''', (row['source_mail_id'], row['sender_id'])).fetchone()
+            if source:
+                return {'id': source['id'], 'source': 'email', 'channel': 'email', 'title': source['subject'],
+                        'content': source['content'], 'sender': source['sender_name'] or source['sender_email'],
+                        'sender_email': source['sender_email'], 'recipient': source['recipient'],
+                        'created_at': source['created_at'], 'folder': source['folder']}
+        elif row['source_message_id']:
+            author = con.execute('SELECT id,name FROM users WHERE id=?', (row['sender_id'],)).fetchone()
+            if author:
+                return next((item for item in message_center.collect(con, author)
+                             if item['id'] == row['source_message_id']), None)
+        return None
+
     def details(con, row, current):
         item = dict(row)
+        item['has_email_notifications'] = bool(item.pop('notification_email'))
+        item.pop('notification_subject')
+        if row['sender_id'] != current['id']:
+            item.pop('source_mail_id')
+            item.pop('source_message_id')
+        item['source_message'] = None
+        source = None
+        if row['source_mail_id'] or row['source_message_id']:
+            source = source_message(con, row)
+            item['source_message'] = {key: source.get(key) for key in ('channel', 'title', 'sender', 'created_at')} if source else {
+                'channel': 'email' if row['source_mail_id'] else 'other', 'title': row['notification_subject'] or 'Wiadomość źródłowa'}
+            item['source_message']['available'] = bool(source)
+        item['client'] = None
+        if row['source_mail_id']:
+            email = source['sender_email'] if source else row['notification_email']
+            name = source['sender'] if source else ''
+            company = mail_rules.classify(email, mail_rules.context(con, row['sender_id']))['company'] if email else None
+            item['client'] = {'name': name, 'email': email, 'company': company['name'] if company else ''}
         item.update(origin='task', key='task:' + row['id'], filename=None,
                     can_update=row['assignee_id'] == current['id'] and row['status'] in ('todo', 'in_progress'),
                     can_cancel=row['sender_id'] == current['id'] and row['status'] in ('todo', 'in_progress'),
@@ -90,6 +135,17 @@ def install(app, db, user, owned, now):
                           (identifier, current['id'], current['id'])).fetchone()
         if not row: raise HTTPException(404, 'Nie znaleziono zadania.')
         return row
+
+    @app.get('/api/tasks/{identifier}/source')
+    def task_source(identifier: str, current=Depends(user)):
+        with db() as con:
+            row = assigned(con, identifier, current)
+            source = source_message(con, row)
+            if not source: raise HTTPException(404, 'Wiadomość źródłowa nie jest już dostępna.')
+            result = {key: source.get(key, '') for key in
+                      ('source', 'channel', 'title', 'sender', 'sender_email', 'recipient', 'content', 'created_at')}
+            result['mail'] = {'id': source['id'], 'folder': source['folder']} if source['source'] == 'email' and current['id'] == row['sender_id'] else None
+            return result
 
     @app.get('/api/tasks')
     def listing(current=Depends(user)):
@@ -150,6 +206,24 @@ def install(app, db, user, owned, now):
             con.begin_write()
             target = con.execute('SELECT * FROM users WHERE id=? AND active=1', (body.assignee_id,)).fetchone()
             if not target: raise HTTPException(422, 'Wybierz aktywnego użytkownika.')
+            source = None
+            notification_email = ''
+            if body.source_message_id:
+                linked = next((item for item in message_center.collect(con, current)
+                               if item['id'] == body.source_message_id and item['direction'] == 'incoming'
+                               and item['source'] != 'email'), None)
+                if not linked: raise HTTPException(404, 'Nie znaleziono wiadomości źródłowej.')
+            if body.source_mail_id:
+                source = con.execute('SELECT * FROM client_mail WHERE id=? AND user_id=?',
+                                     (body.source_mail_id, current['id'])).fetchone()
+                if not source: raise HTTPException(404, 'Nie znaleziono wiadomości źródłowej.')
+                if source['folder'] not in ('inbox', 'archive') or source['category'] == 'spam':
+                    raise HTTPException(422, 'Wybierz otrzymaną wiadomość spoza Spamu.')
+                try:
+                    notification_email = validate_email(source['sender_email'], check_deliverability=False,
+                                                        allow_smtputf8=False).ascii_email
+                except EmailNotValidError:
+                    raise HTTPException(422, 'Wiadomość nie ma poprawnego adresu e-mail nadawcy.') from None
             if body.folder_id:
                 folder = con.execute('SELECT id,user_id FROM folders WHERE id=?', (body.folder_id,)).fetchone()
                 if not folder or not access.permissions(con, current, folder['id'], folder['user_id'])['read']:
@@ -164,23 +238,57 @@ def install(app, db, user, owned, now):
                 if body.kind == 'modification' and not rights['edit']:
                     raise HTTPException(422, 'Odbiorca nie ma uprawnienia do edycji tego dokumentu.')
             identifier = secrets.token_hex(16)
-            con.execute('''INSERT INTO user_tasks(id,sender_id,assignee_id,title,description,kind,document_id,folder_id,due_at,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)''', (identifier, current['id'], body.assignee_id, body.title, body.description.strip(),
-                body.kind, body.document_id, body.folder_id, body.due_at.isoformat() if body.due_at else None, now(), now()))
+            con.execute('''INSERT INTO user_tasks(id,sender_id,assignee_id,title,description,kind,document_id,folder_id,due_at,created_at,updated_at,
+                source_mail_id,notification_email,notification_subject,source_message_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (identifier, current['id'], body.assignee_id, body.title, body.description.strip(), body.kind, body.document_id,
+                 body.folder_id, body.due_at.isoformat() if body.due_at else None, now(), now(),
+                 body.source_mail_id, notification_email, source['subject'] if source else '', body.source_message_id))
             return details(con, assigned(con, identifier, current), current)
 
     @app.patch('/api/tasks/{identifier}/status')
     def update(identifier: str, body: StatusInput, current=Depends(user)):
+        notification_id = None
         with db() as con:
             con.begin_write()
             row = assigned(con, identifier, current)
             expected_user = row['sender_id'] if body.status == 'cancelled' else row['assignee_id']
             if expected_user != current['id']: raise HTTPException(403, 'Tę zmianę może wykonać tylko właściwy uczestnik zadania.')
             if row['version'] != body.version: raise HTTPException(409, 'Zadanie zostało zmienione. Odśwież listę.')
+            if row['status'] == body.status:
+                return details(con, row, current)
             if row['status'] not in ('todo', 'in_progress'): raise HTTPException(409, 'Zadanie jest już zakończone lub anulowane.')
             con.execute('UPDATE user_tasks SET status=?,updated_at=?,completed_at=?,version=version+1 WHERE id=?',
                         (body.status, now(), now() if body.status == 'done' else None, identifier))
-            return details(con, assigned(con, identifier, current), current)
+            labels = {'todo': 'Do wykonania', 'in_progress': 'W toku', 'done': 'Wykonano', 'cancelled': 'Anulowano'}
+            subject = f"Zmiana statusu zadania: {row['title']}"[:200]
+            content = (f"Status zadania został zmieniony.\n\nZadanie: {row['title']}\n"
+                       f"Poprzedni status: {labels[row['status']]}\nNowy status: {labels[body.status]}")
+            participant = row['sender_id'] if row['sender_id'] != current['id'] else row['assignee_id']
+            if participant != current['id']:
+                con.execute('INSERT INTO user_messages(id,sender_id,recipient_id,subject,message,created_at) VALUES(?,?,?,?,?,?)',
+                            (secrets.token_hex(16), current['id'], participant, subject, content, now()))
+            if row['notification_email']:
+                notification_id = secrets.token_hex(16)
+                email_subject = f"Re: {row['notification_subject'] or row['title']}".replace('\r', ' ').replace('\n', ' ')[:200]
+                con.execute('''INSERT INTO client_mail(id,user_id,sender_name,sender_email,recipient,subject,content,folder,created_at)
+                    VALUES(?,?,?,?,?,?,?,'drafts',?)''',
+                    (notification_id, row['sender_id'], row['sender_name'], '', row['notification_email'], email_subject, content, now()))
+            result = details(con, assigned(con, identifier, current), current)
+        if notification_id:
+            try:
+                with db() as con:
+                    con.begin_write()
+                    author = con.execute('SELECT * FROM users WHERE id=? AND active=1', (row['sender_id'],)).fetchone()
+                    if not author: raise HTTPException(503, 'Konto pocztowe autora zadania jest nieaktywne.')
+                    config, sender_name = mail_settings.smtp_config(con, author)
+                    message = con.execute('SELECT * FROM client_mail WHERE id=?', (notification_id,)).fetchone()
+                    mailer.send_message(config, message['recipient'], sender_name, message['subject'], message['content'])
+                    con.execute("UPDATE client_mail SET folder='sent',sender_email=?,sender_name=?,created_at=?,version=version+1 WHERE id=?",
+                                (config['sender'], sender_name, now(), notification_id))
+                result['notification'] = {'status': 'sent'}
+            except HTTPException as exc:
+                result['notification'] = {'status': 'failed', 'message': str(exc.detail)}
+        return result
 
     @app.delete('/api/tasks/{identifier}')
     def delete(identifier: str, version: int = Query(ge=1), current=Depends(user)):

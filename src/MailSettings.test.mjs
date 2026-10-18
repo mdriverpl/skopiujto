@@ -7,13 +7,48 @@ import { ref } from 'vue'
 const compiled = compileScript(parse(readFileSync(new URL('./MailSettings.vue', import.meta.url), 'utf8')).descriptor,
   { id: 'settings-test' }).content.replace(/^import .*$/gm, '').replace('export default', 'globalThis.component =')
 function panel(api, initial) {
-  const context = { ref, onMounted() {} }, events = []
+  const mounted = [], context = { ref, onMounted: callback => mounted.push(callback) }, events = []
   runInNewContext(compiled, context)
-  return { state: context.component.setup({ api, initial }, { expose() {}, emit: (...args) => events.push(args) }), events }
+  const state = context.component.setup({ api, initial }, { expose() {}, emit: (...args) => events.push(args) })
+  state.mount = async () => { for (const callback of mounted) await callback() }
+  return { state, events }
 }
 const initial = { account: { email: 'jan@example.com', sender_name: 'Jan', version: 1,
   smtp: { enabled: true, host: 'smtp.example.com', port: 465, security: 'ssl', username: 'jan@example.com', has_password: true },
   imap: { enabled: false, host: '', port: 993, security: 'ssl', username: '', has_password: false } } }
+
+test('standalone settings page loads saved account before allowing changes', async () => {
+  const calls = []
+  const { state } = panel(async (path, method) => { calls.push([path, method]); return initial })
+  await state.save()
+  assert.equal(calls.length, 0)
+  await state.mount()
+  assert.deepEqual(calls, [['/client-mail/settings', undefined]])
+  assert.equal(state.loaded.value, true)
+  assert.equal(state.form.value.email, 'jan@example.com')
+  assert.equal(state.form.value.version, 1)
+  assert.equal(state.form.value.smtp.password, '')
+})
+
+test('failed initial load cannot overwrite account and retry restores saved configuration', async () => {
+  let fail = true
+  const calls = []
+  const { state } = panel(async (path, method) => {
+    calls.push([path, method])
+    if (fail) throw new Error('Brak połączenia')
+    return initial
+  })
+  await state.mount()
+  assert.equal(state.loaded.value, false)
+  assert.match(state.error.value, /Brak połączenia/)
+  await state.save()
+  assert.equal(calls.length, 1)
+  fail = false
+  await state.load()
+  assert.equal(state.loaded.value, true)
+  assert.equal(state.error.value, '')
+  assert.equal(state.form.value.smtp.host, 'smtp.example.com')
+})
 
 test('saved passwords stay blank and save uses latest version without returning secrets', async () => {
   let body

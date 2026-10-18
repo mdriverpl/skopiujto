@@ -1,6 +1,6 @@
 from backend.test_storage import app_client
 from backend.test_access import READER, create_reader, login
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from backend import mail_sync
 
 
@@ -35,6 +35,33 @@ def test_summary_empty_mailbox_returns_zeros(app_client):
 def empty_summary():
     return dict.fromkeys(('total', 'unread', 'urgent', 'today', 'today_unread', 'today_urgent',
                           'today_clients', 'today_government', 'today_other', 'today_invoices'), 0)
+
+
+def test_period_ranges_use_precise_hours_exclude_spam_sent_future_and_keep_all_time_totals(app_client, monkeypatch):
+    main, client = app_client
+    current = datetime(2026, 10, 17, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(mail_sync, 'utc_now', lambda: current)
+    owner = client.get('/api/me').json()['id']
+    rows = [('new', 1, 1, 'inbox', '', 'invoice'), ('read', 23, 0, 'inbox', '', ''),
+            ('boundary', 24, 1, 'inbox', '', ''), ('outside', 24.001, 1, 'inbox', '', ''),
+            ('older', 36, 0, 'inbox', '', ''), ('week', 192, 1, 'inbox', '', ''),
+            ('future', -1, 1, 'inbox', '', ''), ('spam', 1, 1, 'spam', '', ''),
+            ('classified', 1, 1, 'inbox', 'spam', ''), ('sent', 1, 1, 'sent', '', '')]
+    with main.db() as con:
+        for identifier, age, unread, folder, category, label in rows:
+            stamp = (current - timedelta(hours=age)).astimezone(timezone(timedelta(hours=2))).isoformat()
+            sender = 'office@agency.gov.pl' if identifier == 'boundary' else 'client@example.com'
+            con.execute('''INSERT INTO client_mail(id,user_id,sender_name,sender_email,recipient,subject,content,folder,unread,category,label,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''', (identifier, owner, 'Sender', sender, 'me@example.com', 'Notice', '', folder, unread, category, label, stamp))
+    for hours, count in [(24, 3), (48, 5), (168, 5), (720, 6)]:
+        response = client.get('/api/client-mail/summary', params={'hours': hours})
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data['period'] == count and data['total'] == 7
+        assert data['period_government'] == 1 and data['period_invoices'] == 1
+    assert client.get('/api/client-mail/summary?hours=24').json()['period_unread'] == 2
+    for hours in (0, 25, -24):
+        assert client.get('/api/client-mail/summary', params={'hours': hours}).status_code == 422
 
 
 def test_today_counts_polish_calendar_day_separately_from_all_unread(app_client, monkeypatch):

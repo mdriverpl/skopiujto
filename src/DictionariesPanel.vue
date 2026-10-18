@@ -1,15 +1,17 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { BookOpen, Sparkles, Plus, ArrowLeft, ArrowUpRight, Search, Pencil, Trash2, X, Save, RefreshCw } from 'lucide-vue-next'
 import AiDataPanel from './AiDataPanel.vue'
 import ExcelTransfer from './ExcelTransfer.vue'
 import { fieldKey } from './documentFields.js'
 
-const props = defineProps({ api: Function })
+const props = defineProps({ api: Function, initialDictionaryId: String })
+const emit = defineEmits(['updated', 'selected'])
 const dictionaries = ref([]), selected = ref(null), entries = ref([]), search = ref('')
 const busy = ref(false), error = ref(''), formError = ref(''), draft = ref(null), record = ref(null)
 const aiCount = ref(0)
 const aiRevision = ref(0)
+watch(() => selected.value?.id || null, id => emit('selected', id))
 async function imported() {
   if (selected.value?.id === 'ai') { aiRevision.value++; return }
   if (selected.value) await open(selected.value)
@@ -70,6 +72,7 @@ async function saveDictionary() {
       ...(item.id ? { version: item.version, field_sources: Object.fromEntries(item.fields.map((field, index) => [field.trim(), item.sources[index]])) } : {}) })
     const saved = item.id ? result.dictionary : result
     dictionaries.value = [...dictionaries.value.filter(entry => entry.id !== saved.id), saved]
+    emit('updated')
     draft.value = null; selected.value = saved; entries.value = item.id ? result.entries : []; search.value = ''
   } catch (err) { formError.value = err.message }
   finally { busy.value = false }
@@ -100,11 +103,14 @@ async function removeRecord(item) {
 async function removeDictionary(item) {
   if (busy.value || !window.confirm(`Usunąć słownik „${item.name}” wraz z jego wpisami?`)) return
   busy.value = true; error.value = ''
-  try { await props.api(`/dictionaries/${item.id}`, 'DELETE'); dictionaries.value = dictionaries.value.filter(entry => entry.id !== item.id) }
+  try { await props.api(`/dictionaries/${item.id}`, 'DELETE'); dictionaries.value = dictionaries.value.filter(entry => entry.id !== item.id); emit('updated') }
   catch (err) { error.value = err.message }
   finally { busy.value = false }
 }
-onMounted(load)
+onMounted(async () => {
+  await load()
+  if (props.initialDictionaryId) await open({ id: props.initialDictionaryId, name: props.initialDictionaryId === 'ai' ? 'AI' : '' })
+})
 </script>
 
 <template>

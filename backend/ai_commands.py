@@ -1,5 +1,6 @@
 """AI prepares a bounded message operation; only reviewed jobs can be executed."""
 import json
+import hashlib
 import secrets
 import time
 import unicodedata
@@ -8,8 +9,8 @@ from typing import Literal
 import httpx
 from email_validator import validate_email, EmailNotValidError
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel, Field
-from backend import ai, mailer, sms
+from pydantic import BaseModel, Field, field_validator, model_validator
+from backend import ai, mailer, sms, mail_settings
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS ai_command_jobs(
@@ -29,10 +30,33 @@ class CommandInput(BaseModel):
     channel: Literal['auto', 'user', 'email', 'sms'] = 'auto'
 
 class ManualInput(CommandInput):
+    source: Literal['both', 'users', 'dictionaries', 'history'] = 'both'
     prompt: str = ''
     subject: str = Field(min_length=1, max_length=200)
     message: str = Field(min_length=1, max_length=5000)
-    recipients: list[str] = Field(min_length=1, max_length=100)
+    recipients: list[str] = Field(default_factory=list, max_length=100)
+    direct_email: str | None = Field(default=None, max_length=254)
+    direct_sms: str | None = Field(default=None, max_length=40)
+
+    @field_validator('direct_sms')
+    @classmethod
+    def sms_address(cls, value):
+        return sms.phone_number(value.strip()) if value else None
+
+    @field_validator('direct_email')
+    @classmethod
+    def email_address(cls, value):
+        if not value: return None
+        try: return validate_email(value.strip(), check_deliverability=False, allow_smtputf8=False).ascii_email
+        except EmailNotValidError: raise ValueError('Podaj poprawny adres e-mail.') from None
+
+    @model_validator(mode='after')
+    def recipients_required(self):
+        if not self.recipients and not self.direct_email and not self.direct_sms: raise ValueError('Wybierz odbiorcę wiadomości.')
+        if self.direct_email and self.channel != 'email': raise ValueError('Adres e-mail wymaga kanału E-mail.')
+        if self.direct_sms and self.channel != 'sms': raise ValueError('Numer telefonu wymaga kanału SMS.')
+        if len(self.recipients) + bool(self.direct_email) + bool(self.direct_sms) > 100: raise ValueError('Wybierz do 100 odbiorców w jednej partii.')
+        return self
 
 class Plan(BaseModel):
     action: Literal['message', 'clarify']
@@ -57,8 +81,31 @@ class ExecuteInput(BaseModel):
 def normalize(value):
     return ''.join(c for c in unicodedata.normalize('NFKD', value.casefold()) if not unicodedata.combining(c)).replace('ł', 'l')
 
-def contacts(con, current, source='both', dictionary_id=None):
+def contacts(con, current, source='both', dictionary_id=None, direct_email=None, direct_sms=None):
     result = []
+    if source == 'history':
+        seen = set()
+        def history_contact(channel, address, name):
+            if not address or len(result) >= 500: return
+            if channel == 'email':
+                try: address = validate_email(address, check_deliverability=False, allow_smtputf8=False).ascii_email
+                except EmailNotValidError: return
+            if (channel, address) in seen: return
+            seen.add((channel, address))
+            identifier = hashlib.sha256((channel + ':' + address).encode()).hexdigest()[:32]
+            result.append({'id': 'h:' + identifier, 'name': name or address, 'source': 'Historia', 'role': '', 'channels': {channel: address}})
+        for row in con.execute("""SELECT sender_name,sender_email,recipient,folder FROM client_mail
+            WHERE user_id=? AND folder IN ('inbox','archive','sent') AND category!='spam' ORDER BY created_at DESC,id LIMIT 1000""", (current['id'],)):
+            history_contact('email', row['recipient'] if row['folder'] == 'sent' else row['sender_email'],
+                            row['recipient'] if row['folder'] == 'sent' else row['sender_name'])
+        for row in con.execute("SELECT payload FROM ai_command_jobs WHERE user_id=? AND status='completed' ORDER BY created_at DESC LIMIT 500", (current['id'],)):
+            for person in json.loads(row['payload']).get('recipients', []):
+                if person.get('status') == 'sent' and person.get('channel') in ('email', 'sms'):
+                    history_contact(person['channel'], person.get('address'), person.get('name'))
+        for row in con.execute('''SELECT DISTINCT u.id,u.name FROM user_messages m JOIN users u ON
+            u.id=CASE WHEN m.sender_id=? THEN m.recipient_id ELSE m.sender_id END
+            WHERE (m.sender_id=? OR m.recipient_id=?) AND u.active=1''', (current['id'], current['id'], current['id'])):
+            history_contact('user', row['id'], row['name'])
     if source in ('both', 'users'):
         for row in con.execute('SELECT id,name FROM users WHERE active=1 ORDER BY name,id'):
             groups = [item['name'] for item in con.execute('SELECT g.name FROM groups g JOIN group_members m ON g.id=m.group_id WHERE m.user_id=?', (row['id'],))]
@@ -86,6 +133,12 @@ def contacts(con, current, source='both', dictionary_id=None):
                 result.append({'id': 'd:' + row['id'], 'name': name[:200], 'source': dictionary['name'],
                     'dictionary_id': dictionary['id'], 'role': first('stanowisko', 'rola', 'dzial', 'grupa')[:200], 'channels': channels})
     if len(result) > 500: raise HTTPException(413, 'Wybierz konkretny słownik: lista kontaktów jest zbyt duża do jednego polecenia.')
+    if direct_email:
+        identifier = 'm:' + hashlib.sha256(direct_email.encode()).hexdigest()[:32]
+        result.append({'id': identifier, 'name': direct_email, 'source': 'Adres e-mail', 'role': '', 'channels': {'email': direct_email}})
+    if direct_sms:
+        identifier = 'm:' + hashlib.sha256(('sms:' + direct_sms).encode()).hexdigest()[:32]
+        result.append({'id': identifier, 'name': direct_sms, 'source': 'Numer telefonu', 'role': '', 'channels': {'sms': direct_sms}})
     return result
 
 async def plan_command(body, candidates):
@@ -128,18 +181,21 @@ def install(app, db, user, now):
         if not row: raise HTTPException(404, 'Nie znaleziono polecenia.')
         return row
 
-    def status_channels(): return {'user': {'configured': True, 'message': ''}, 'email': mailer.settings_status(), 'sms': sms.settings_status()}
+    def status_channels(current):
+        with db() as con:
+            email = mail_settings.public_settings(con, current)['smtp']
+        return {'user': {'configured': True, 'message': ''}, 'email': email, 'sms': sms.settings_status()}
 
     @app.get('/api/ai/commands/options')
     def options(current=Depends(user)):
         with db() as con:
             dictionaries = [dict(row) for row in con.execute('SELECT id,name FROM dictionaries WHERE user_id=? ORDER BY name', (current['id'],))]
-        return {'ai': ai.configuration(), 'dictionaries': dictionaries, 'channels': status_channels()}
+        return {'ai': ai.configuration(), 'dictionaries': dictionaries, 'channels': status_channels(current)}
 
     def save_plan(body, planned, candidates, current):
         lookup = {item['id']: item for item in candidates}
         chosen, seen = [], set()
-        channels = status_channels()
+        channels = status_channels(current)
         for identifier in dict.fromkeys(planned.recipients):
             contact = lookup[identifier]
             preferred = body.channel if body.channel != 'auto' else planned.channel
@@ -153,6 +209,8 @@ def install(app, db, user, now):
                 'address': address, 'available': bool(address and not reason), 'reason': reason, 'status': 'pending'})
         payload = {**planned.model_dump(), 'subject': planned.subject.strip(), 'message': planned.message.strip(),
             'recipients': chosen, 'scope': {'source': body.source, 'dictionary_id': body.dictionary_id}}
+        if getattr(body, 'direct_email', None): payload['scope']['direct_email'] = body.direct_email
+        if getattr(body, 'direct_sms', None): payload['scope']['direct_sms'] = body.direct_sms
         identifier = secrets.token_hex(16)
         with db() as con:
             con.execute('INSERT INTO ai_command_jobs(id,user_id,prompt,payload,created_at,expires) VALUES(?,?,?,?,?,?)',
@@ -160,17 +218,17 @@ def install(app, db, user, now):
         return {'id': identifier, 'action': 'message', **{key: payload[key] for key in ('subject', 'message', 'recipients', 'explanation')}}
 
     @app.get('/api/messages/contacts')
-    def message_contacts(source: Literal['both', 'users', 'dictionaries'] = 'both', dictionary_id: str | None = None, current=Depends(user)):
+    def message_contacts(source: Literal['both', 'users', 'dictionaries', 'history'] = 'both', dictionary_id: str | None = None, current=Depends(user)):
         with db() as con: return contacts(con, current, source, dictionary_id)
 
     @app.post('/api/messages/prepare')
     def manual_message(body: ManualInput, current=Depends(user)):
         if not body.subject.strip() or not body.message.strip(): raise HTTPException(422, 'Uzupe\u0142nij temat i wiadomo\u015b\u0107.')
-        with db() as con: candidates = contacts(con, current, body.source, body.dictionary_id)
+        with db() as con: candidates = contacts(con, current, body.source, body.dictionary_id, body.direct_email, body.direct_sms)
         available = {item['id'] for item in candidates}
         if set(body.recipients) - available: raise HTTPException(422, 'Nieznany odbiorca wiadomo\u015bci.')
         planned = Plan(action='message', channel=body.channel, subject=body.subject, message=body.message,
-                       recipients=body.recipients, explanation='Sprawd\u017a odbiorc\u00f3w i tre\u015b\u0107 przed wys\u0142aniem.')
+                       recipients=[*body.recipients, *[item['id'] for item in candidates if item['id'].startswith('m:')]], explanation='Sprawd\u017a odbiorc\u00f3w i tre\u015b\u0107 przed wys\u0142aniem.')
         return save_plan(body, planned, candidates, current)
 
     @app.post('/api/ai/commands/plan')
@@ -209,7 +267,8 @@ def install(app, db, user, now):
                 if (not contact or not item['available'] or contact['channels'].get(item['channel']) != item['address']
                         or any(contact[key] != item[key] for key in ('name', 'source', 'role'))):
                     raise HTTPException(409, 'Dane odbiorcy zmieniły się lub są niekompletne. Przygotuj podgląd ponownie.')
-                if item['channel'] == 'email': configs['email'] = mailer.configuration()
+                if item['channel'] == 'email':
+                    configs['email'], configs['email_name'] = mail_settings.smtp_config(con, current)
                 if item['channel'] == 'sms':
                     if len(body.message) > 1200: raise HTTPException(422, 'Treść SMS przekracza 1200 znaków.')
                     configs['sms'] = sms.configuration()
@@ -226,7 +285,7 @@ def install(app, db, user, now):
                         if not active: raise HTTPException(409, 'Konto odbiorcy jest nieaktywne.')
                         con.execute('INSERT INTO user_messages(id,sender_id,recipient_id,subject,message,created_at) VALUES(?,?,?,?,?,?)',
                             (secrets.token_hex(16), current['id'], item['address'], payload['subject'], payload['message'], now()))
-                elif item['channel'] == 'email': mailer.send_message(configs['email'], item['address'], current['name'], payload['subject'], payload['message'])
+                elif item['channel'] == 'email': mailer.send_message(configs['email'], item['address'], configs['email_name'], payload['subject'], payload['message'])
                 else: sms.send_text(configs['sms'], item['address'], payload['message'])
                 item['status'] = 'sent'; item['sent_at'] = now()
             except HTTPException as exc: item['status'] = 'failed'; item['reason'] = str(exc.detail)
