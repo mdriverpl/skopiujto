@@ -661,3 +661,12 @@ włączyć alerty o wiadomościach, zadaniach i terminach oraz zarządzać urzą
 Logowanie jest zwykłe, bez QR. Instalacja wymaga HTTPS (lokalnie: localhost).
 Push wymaga kluczy VAPID na serwerze i zgody na każdym urządzeniu.
 Instrukcja konfiguracji i ograniczenia: [PWA](backend/PWA.md).
+
+
+### Standalone mail and notification worker
+
+Run `python -m backend.background_worker` as a separate process without the HTTP server. Two independent loops receive IMAP mail and send Web Push immediately, then every 30 seconds (`EDOCUMENTS_BACKGROUND_INTERVAL`, minimum 10). Mail uses a rolling 7-day window (`EDOCUMENTS_BACKGROUND_MAIL_HOURS=168`; allowed: 24, 48, 168, 720), with up to 100 messages per account per cycle. Remaining messages are received in subsequent cycles. One failed account does not stop others. PostgreSQL advisory locks prevent overlapping worker cycles. Use the same `.env`, database and mail encryption key as the API.
+
+Windows: `powershell -ExecutionPolicy Bypass -File scripts/start-background-worker.ps1`. The hidden process continues after closing PWA and terminal windows. Logs: `.runtime/background-worker.err.log`. Run the script again after restarting Windows. Docker Compose starts the separate `worker` service with `restart: unless-stopped` and disables the API's embedded push dispatcher. Local build: `docker compose -f compose.yaml -f compose.build.yaml up -d --build`.
+
+Enable notifications once on each device in the application's notification settings and grant browser/system permission. Closing the PWA window does not stop the server worker; delivery still depends on browser background settings and the operating system. Session checks remain in place: logging out, session expiry or account suspension stops notifications for the device. The worker never sends email or runs AI analysis.

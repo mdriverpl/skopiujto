@@ -9,7 +9,8 @@ services:
     volumes:
       - mail-settings-data:/app/data
     environment:
-      DATABASE_URL: ${DATABASE_URL:?Uzupełnij DATABASE_URL w .env}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      EDOCUMENTS_WEBPUSH_WORKER: "0"
     healthcheck:
       test:
         - CMD
@@ -20,6 +21,20 @@ services:
       timeout: 15s
       start_period: 60s
       retries: 3
+
+  worker:
+    image: ghcr.io/mdriverpl/skopiujto:${APP_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: ["python", "-m", "backend.background_worker"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+    volumes:
+      - mail-settings-data:/app/data
+    depends_on:
+      app:
+        condition: service_healthy
 
 volumes:
   mail-settings-data:

@@ -2,3 +2,6 @@ services:
   app:
     image: skopiujto:local
     build: .
+  worker:
+    image: skopiujto:local
+    build: .
