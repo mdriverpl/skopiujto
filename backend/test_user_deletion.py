@@ -23,9 +23,11 @@ def test_delete_revokes_access_and_memberships(app_client):
         assert customer.get('/api/me').status_code == 401
     assert client.post('/api/login', json=READER).status_code == 401
     with main.db() as con:
-        for table in ('users', 'sessions', 'api_access_tokens', 'group_members', 'folder_user_permissions'):
+        for table in ('sessions', 'api_access_tokens', 'group_members', 'folder_user_permissions'):
             column = 'id' if table == 'users' else 'user_id'
             assert con.execute(f'SELECT count(*) FROM {table} WHERE {column}=?', (account['id'],)).fetchone()[0] == 0
+        archived = con.execute('SELECT * FROM users WHERE id=?', (account['id'],)).fetchone()
+        assert archived['deleted_at'] and not archived['active']
         assert con.execute('SELECT count(*) FROM impersonation_sessions WHERE target_id=?', (account['id'],)).fetchone()[0] == 0
         assert con.execute('SELECT count(*) FROM impersonation_events WHERE target_id=?', (account['id'],)).fetchone()[0] == 2
 
@@ -63,17 +65,32 @@ def test_delete_enforces_company_and_role(app_client):
 
 
 @pytest.mark.parametrize('kind', ['documents', 'notes'])
-def test_delete_preserves_linked_data_and_rolls_back_cleanup(app_client, kind):
+def test_delete_retains_linked_records_and_revokes_login(app_client, kind):
     main, client = app_client
     account = create_reader(client, can_add=True)
     group = client.post('/api/admin/groups', json={'name': 'Team'}).json()
     client.put(f"/api/admin/groups/{group['id']}/members/{account['id']}")
     with TestClient(main.app) as customer:
         customer.post('/api/login', json=READER)
-        record = customer.post('/api/' + kind, json={'title': 'Keep this'}).json()
+        record = customer.post('/api/' + kind, json={'title': 'Keep this', 'content': 'Original content'}).json()
         response = client.delete('/api/admin/users/' + account['id'])
-        assert response.status_code == 409, response.text
-        assert customer.get('/api/me').status_code == 200
-        assert any(item['id'] == record['id'] for item in customer.get('/api/' + kind).json())
+        assert response.status_code == 204, response.text
+        assert customer.get('/api/me').status_code == 401
+    assert account['id'] not in {row['id'] for row in client.get('/api/admin/users').json()}
+    archived = next(row for row in client.get('/api/admin/users?include_deleted=true').json() if row['id'] == account['id'])
+    assert archived['deleted_at'] and not archived['active']
+    assert client.patch('/api/admin/users/' + account['id'], json={'active': True}).status_code == 404
     with main.db() as con:
-        assert con.execute('SELECT 1 FROM group_members WHERE user_id=?', (account['id'],)).fetchone()
+        row = con.execute(f'SELECT * FROM {kind} WHERE id=?', (record['id'],)).fetchone()
+        assert row['user_id'] == account['id'] and row['content'] == 'Original content'
+        assert not con.execute('SELECT 1 FROM group_members WHERE user_id=?', (account['id'],)).fetchone()
+    # A normal company administrator can inspect archived data, including personal notes.
+    preview = client.post('/api/admin/users/' + account['id'] + '/impersonate')
+    assert preview.status_code == 200 and preview.json()['read_only']
+    current = client.get('/api/me').json()
+    assert current['id'] == account['id'] and current['impersonation']['read_only']
+    assert record['id'] in {row['id'] for row in client.get('/api/' + kind).json()}
+    assert client.post('/api/' + kind, json={'title': 'Not allowed'}).status_code == 403
+    assert client.delete('/api/' + kind + '/' + record['id']).status_code == 403
+    assert client.post('/api/admin/impersonation/stop').status_code == 200
+    assert client.get('/api/me').json()['id'] != account['id']

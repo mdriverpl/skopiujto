@@ -140,5 +140,7 @@ def install(app, db, user):
                 raise HTTPException(409, 'Firmę domyślną można edytować, ale nie usuwać.')
             if con.execute('SELECT id FROM users WHERE company_id=? LIMIT 1', (identifier,)).fetchone() or con.execute('SELECT id FROM groups WHERE company_id=? LIMIT 1', (identifier,)).fetchone():
                 raise HTTPException(409, 'Firma ma przypisane konta lub grupy. Przenieś konta i usuń grupy przed usunięciem firmy.')
+            if con.execute('SELECT id FROM flow_definitions WHERE company_id=? LIMIT 1', (identifier,)).fetchone():
+                raise HTTPException(409, 'Firma ma zapisane Flow. Usuń procesy przed usunięciem firmy.')
             con.execute('DELETE FROM companies WHERE id=?', (identifier,))
         return Response(status_code=204)

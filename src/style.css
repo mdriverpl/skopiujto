@@ -20,7 +20,7 @@ a { color: var(--accent); }
 .tagline, .muted { color: var(--secondary); font-size: 14px; line-height: 1.6; }
 .account { display: flex; gap: 15px; align-items: center; font-size: 14px; }
 .account-menu { position: relative; }
-.account-actions { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; padding: 8px; background: var(--surface); border: 1px solid var(--theme-border, #e2e8f0); border-radius: 12px; box-shadow: 0 8px 24px #0002; white-space: nowrap; }
+.account-actions { display: grid; gap: 4px; max-width: calc(100vw - 24px); position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; padding: 8px; background: var(--surface); border: 1px solid var(--theme-border, #e2e8f0); border-radius: 12px; box-shadow: 0 8px 24px #0002; white-space: nowrap; }
 .icon-button { border: none; padding: 9px; }
 main { max-width: 1140px; margin: 0 auto; padding: 42px 24px 64px; }
 h1 { font-size: 32px; margin: 10px 0; letter-spacing: -1px; }
@@ -315,3 +315,27 @@ legend { font-size: 13px; padding: 0 6px; }
 .impersonation-banner { position:sticky; top:100px; z-index:5; display:flex; align-items:center; justify-content:space-between; gap:16px; margin:0 0 22px; padding:14px 16px; border:1px solid var(--warning); border-radius:12px; color:var(--text); background:var(--warning-soft); box-shadow:0 2px 8px #0001; }
 .impersonation-banner strong { display:block; font-size:13px; } .impersonation-banner span { display:block; font-size:11px; line-height:1.7; margin-top:4px; } .impersonation-banner button { flex-shrink:0; font-size:12px; }
 @media(max-width:750px) { .impersonation-banner { top:8px; flex-direction:column; align-items:flex-start; } }
+
+/* Compact document and folder icons, with the same controls as the list. */
+.drive-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr)); gap: 12px; border: none; box-shadow: none; background: transparent; }
+.drive-icons .drive-row { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 14px; min-width: 0; align-content: start; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; text-align: center; }
+.drive-icons .document-title { flex-direction: column; align-items: center; gap: 10px; min-width: 0; width: 100%; text-align: center; }
+.drive-icons .document-title > span:last-child { min-width: 0; width: 100%; overflow-wrap: anywhere; }
+.drive-icons .document-open { text-align: center; }
+.drive-icons .document-title strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; font-size: 12px; line-height: 1.4; }
+.drive-icons .folder-label { justify-content: center; }
+.drive-icons .file-icon { flex-shrink: 0; padding: 12px; border-radius: 10px; }
+.drive-icons .file-icon svg { width: 30px; height: 30px; }
+.drive-icons .file-size, .drive-icons .date, .drive-icons .document-title small { display: none; }
+.drive-icons .workflow-status, .drive-icons .approval-summary { max-width: 100%; justify-content: center; }
+.drive-icons .file-actions { justify-content: center; align-self: end; width: 100%; padding-top: 8px; border-top: 1px solid var(--border); }
+.drive-icons .file-actions button, .drive-icons .file-actions a { padding: 6px; }
+.drive-icons .empty { grid-column: 1 / -1; }
+
+/* PWA settings must cover the sticky workspace header. */
+.pwa-backdrop { z-index: 100; }
+
+/* Public product page uses the whole window; the signed-in workspace keeps its layout. */
+.product-shell { background: #fcfbf8; }
+main.product-content { max-width: none; width: 100%; padding: 0; margin: 0; }
+.product-content > .error { margin: 16px 24px; }

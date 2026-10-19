@@ -2,6 +2,7 @@ import secrets
 import json
 from backend import database, companies
 from typing import Literal
+from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -65,17 +66,18 @@ def install(app, db, user, password_hash):
 
     def group(con, group_id, current):
         row = con.execute('SELECT * FROM groups WHERE id=?', (group_id,)).fetchone()
-        if not row or (not current.get('is_superadmin') and row['company_id'] != current['company_id']):
+        if not row or row.get('deleted_at') or (not current.get('is_superadmin') and row['company_id'] != current['company_id']):
             raise HTTPException(404, 'Nie znaleziono grupy.')
         return row
 
     @app.get('/api/admin/users')
-    def users(current=Depends(admin)):
+    def users(include_deleted: bool = False, current=Depends(admin)):
         with db() as con:
-            query = 'SELECT u.*,c.name AS company_name FROM users u JOIN companies c ON c.id=u.company_id'
+            query = 'SELECT u.*,c.name AS company_name FROM users u JOIN companies c ON c.id=u.company_id WHERE 1=1'
+            if not include_deleted: query += ' AND u.deleted_at IS NULL'
             params = ()
             if not current.get('is_superadmin'):
-                query += ' WHERE u.company_id=?'; params = (current['company_id'],)
+                query += ' AND u.company_id=?'; params = (current['company_id'],)
             return [public_account(row) for row in con.execute(query + ' ORDER BY u.name', params)]
 
     @app.post('/api/admin/users', status_code=201)
@@ -109,7 +111,7 @@ def install(app, db, user, password_hash):
         with db() as con:
             con.begin_write()
             row = con.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone()
-            if not row or (not current.get('is_superadmin') and (row['company_id'] != current['company_id'] or row['is_superadmin'])):
+            if not row or row.get('deleted_at') or (not current.get('is_superadmin') and (row['company_id'] != current['company_id'] or row['is_superadmin'])):
                 raise HTTPException(404, 'Nie znaleziono użytkownika.')
             if row['is_superadmin'] and (changes.get('role') == 'user' or changes.get('active') is False):
                 raise HTTPException(409, 'Nie można zablokować ani zdegradować jedynego superadministratora.')
@@ -150,7 +152,7 @@ def install(app, db, user, password_hash):
             with db() as con:
                 con.begin_write()
                 row = con.execute('SELECT * FROM users WHERE id=? FOR UPDATE', (user_id,)).fetchone()
-                if not row or (not current.get('is_superadmin') and row['company_id'] != current['company_id']):
+                if not row or row.get('deleted_at') or (not current.get('is_superadmin') and row['company_id'] != current['company_id']):
                     raise HTTPException(404, 'Nie znaleziono użytkownika.')
                 if row['is_superadmin']:
                     raise HTTPException(409, 'Nie można usunąć superadministratora.')
@@ -160,17 +162,16 @@ def install(app, db, user, password_hash):
                     count = con.execute("SELECT count(*) FROM users WHERE role='admin' AND active=1 AND company_id=?", (row['company_id'],)).fetchone()[0]
                     if count <= 1:
                         raise HTTPException(409, 'Musi pozostać co najmniej jeden aktywny administrator firmy.')
-                # Preserve personal records that would otherwise be removed by cascading foreign keys.
-                for table in ('notes', 'dictionaries', 'saved_document_data', 'client_mail', 'edelivery_records'):
-                    if con.execute(f'SELECT 1 FROM {table} WHERE user_id=? LIMIT 1', (user_id,)).fetchone():
-                        raise HTTPException(409, 'Konto ma powiązane dane. Usuń je wcześniej lub zablokuj konto zamiast je usuwać.')
+                # Retain the owner identity and every foreign-key relationship for archived records.
                 con.execute('DELETE FROM sessions WHERE user_id=?', (user_id,))
+                con.execute('DELETE FROM api_access_tokens WHERE user_id=?', (user_id,))
+                con.execute('DELETE FROM impersonation_sessions WHERE target_id=? OR actor_id=?', (user_id, user_id))
                 con.execute('DELETE FROM group_members WHERE user_id=?', (user_id,))
                 con.execute('DELETE FROM folder_user_permissions WHERE user_id=?', (user_id,))
-                con.execute('DELETE FROM users WHERE id=?', (user_id,))
+                con.execute('UPDATE users SET active=0,deleted_at=?,password=? WHERE id=?',
+                            (datetime.now(timezone.utc).isoformat(), password_hash(secrets.token_urlsafe(48)), user_id))
         except database.IntegrityError:
-            # Roll back session and permission cleanup as well when retained records reference this account.
-            raise HTTPException(409, 'Konto ma powiązane dane. Usuń je wcześniej lub zablokuj konto zamiast je usuwać.') from None
+            raise HTTPException(409, 'Nie udało się usunąć konta. Żadne dokumenty ani uprawnienia nie zostały zmienione.') from None
 
     @app.get('/api/admin/groups')
     def groups(current=Depends(admin)):
@@ -224,7 +225,7 @@ def install(app, db, user, password_hash):
             query = 'SELECT f.*,u.name AS owner_name,u.company_id FROM folders f JOIN users u ON u.id=f.user_id'
             params = ()
             if not current.get('is_superadmin'):
-                query += ' WHERE u.company_id=?'; params = (current['company_id'],)
+                query += ' AND u.company_id=?'; params = (current['company_id'],)
             return [dict(row) for row in con.execute(query + ' ORDER BY f.name', params)]
 
     @app.put('/api/admin/groups/{group_id}/permissions')

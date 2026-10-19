@@ -56,3 +56,19 @@ test('search finds note contents and successful deletion updates the list', asyn
   assert.equal(state.notes.value.length, 1)
   assert.equal(state.filtered.value.length, 0)
 })
+
+
+test('content-only notes generate a title and blank content cannot be saved', async () => {
+  const calls = []
+  const { state } = panel(async (path, method, body) => { calls.push(body); return { ...note, ...body } })
+  state.edit()
+  state.editor.value.content = '   '
+  await state.save()
+  assert.equal(calls.length, 0)
+  state.editor.value.content = 'First line\nMore details'
+  await state.save()
+  assert.equal(calls[0].title, 'First line')
+  assert.equal(calls[0].content, 'First line\nMore details')
+  state.edit({ ...note, content: '' })
+  assert.equal(state.editor.value.content, note.title)
+})

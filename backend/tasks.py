@@ -40,7 +40,7 @@ class TaskInput(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(default='', max_length=5000)
     assignee_id: str = Field(min_length=1, max_length=100)
-    kind: Literal['general', 'signature', 'modification'] = 'general'
+    kind: Literal['general', 'signature', 'modification', 'folder_completion'] = 'general'
     document_id: str | None = Field(default=None, max_length=100)
     folder_id: str | None = Field(default=None, max_length=100)
     due_at: datetime | None = None
@@ -197,6 +197,9 @@ def install(app, db, user, owned, now):
                         'filename': doc['filename'], 'sender_name': current['name'], 'assignee_name': current['name'],
                         'status': 'done' if deadline['done'] else 'todo', 'due_at': deadline['due_at'],
                         'created_at': doc['created_at'], 'can_update': bool(rights['edit'] and not deadline['done']), 'can_cancel': False})
+            if current.get('impersonation', {}).get('read_only'):
+                for item in mine + sent:
+                    item.update(can_update=False, can_cancel=False, can_delete=False, can_accept=False)
             for items in (mine, sent): items.sort(key=lambda item: (item['created_at'], item['key']), reverse=True)
             return {'mine': mine, 'sent': sent, 'waiting': sum(item['status'] in ('todo', 'in_progress', 'waiting', 'sending') for item in mine)}
 

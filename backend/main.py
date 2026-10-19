@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
 from backend import storage, access, admin, images, mailing, workflow, richtext, ai, document_fields, ai_files, saved_data, tasks, dictionaries, dictionary_excel, ai_commands, surveys, audit
-from backend import database, api_tokens, assistant, notes, client_mail, mail_settings, mail_daily, edelivery, edelivery_connection, companies, impersonation
-from backend import message_center
+from backend import database, api_tokens, assistant, notes, flows, client_mail, mail_settings, mail_daily, edelivery, edelivery_connection, companies, impersonation
+from backend import message_center, webpush
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / '.env')
@@ -81,6 +81,7 @@ def initialize():
         c.executescript(client_mail.mail_rules.SCHEMA)
         c.executescript(ai_commands.SCHEMA)
         c.executescript(message_center.SCHEMA)
+        c.executescript(webpush.SCHEMA)
         c.executescript(surveys.SCHEMA)
         if 'scoring_profile' not in c.columns('surveys'):
             c.execute("ALTER TABLE surveys ADD COLUMN scoring_profile TEXT NOT NULL DEFAULT ''")
@@ -93,14 +94,17 @@ def initialize():
         for name, kind in [('role', "TEXT NOT NULL DEFAULT 'user'"), ('active', 'INTEGER NOT NULL DEFAULT 1'),
                            ('can_read', 'INTEGER NOT NULL DEFAULT 1'), ('can_edit', 'INTEGER NOT NULL DEFAULT 1'),
                            ('can_add', 'INTEGER NOT NULL DEFAULT 1'), ('can_delete', 'INTEGER NOT NULL DEFAULT 1'),
-                           ('email', 'TEXT'), ('must_change_password', 'INTEGER NOT NULL DEFAULT 0'),
+                           ('email', 'TEXT'), ('deleted_at', 'TEXT'), ('must_change_password', 'INTEGER NOT NULL DEFAULT 0'),
                            ('menu_order', "TEXT NOT NULL DEFAULT '[]'")]:
             if name not in user_columns:
                 c.execute(f'ALTER TABLE users ADD COLUMN {name} {kind}')
         if 'role' not in user_columns:
             c.execute("UPDATE users SET role='admin' WHERE id=(SELECT id FROM users ORDER BY id LIMIT 1)")
         companies.initialize(c)
+        c.executescript(flows.SCHEMA)
         c.executescript(impersonation.SCHEMA)
+        if 'read_only' not in c.columns('impersonation_sessions'):
+            c.execute('ALTER TABLE impersonation_sessions ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0')
         columns = c.columns('documents')
         for name, kind in [('object_key', 'TEXT'), ('object_bucket', 'TEXT'), ('file_size', 'INTEGER'),
                            ('folder_id', 'TEXT REFERENCES folders(id) ON DELETE RESTRICT'),
@@ -162,9 +166,9 @@ def user(request: Request, bearer=Depends(bearer_auth), cookie=Depends(cookie_au
     token = bearer.credentials if bearer else (cookie or '')
     with db() as c:
         if bearer:
-            row = c.execute('SELECT u.*,co.name AS company_name,t.scope AS api_scope FROM api_access_tokens t JOIN users u ON u.id=t.user_id JOIN companies co ON co.id=u.company_id WHERE t.token_hash=? AND t.expires>? AND u.active=1', (digest(token),datetime.now(timezone.utc).timestamp())).fetchone()
+            row = c.execute('SELECT u.*,co.name AS company_name,t.scope AS api_scope FROM api_access_tokens t JOIN users u ON u.id=t.user_id JOIN companies co ON co.id=u.company_id WHERE t.token_hash=? AND t.expires>? AND u.active=1 AND u.deleted_at IS NULL', (digest(token),datetime.now(timezone.utc).timestamp())).fetchone()
         else:
-            row = c.execute('SELECT u.*,co.name AS company_name FROM sessions s JOIN users u ON u.id=s.user_id JOIN companies co ON co.id=u.company_id WHERE s.token=? AND s.expires>? AND u.active=1', (digest(token),datetime.now(timezone.utc).timestamp())).fetchone()
+            row = c.execute('SELECT u.*,co.name AS company_name FROM sessions s JOIN users u ON u.id=s.user_id JOIN companies co ON co.id=u.company_id WHERE s.token=? AND s.expires>? AND u.active=1 AND u.deleted_at IS NULL', (digest(token),datetime.now(timezone.utc).timestamp())).fetchone()
         mode = None
         if row and not bearer:
             row, mode = impersonation.resolve(c, request, row, digest(token), digest)
@@ -179,6 +183,10 @@ def user(request: Request, bearer=Depends(bearer_auth), cookie=Depends(cookie_au
     if mode:
         result['impersonation'] = mode
         result['must_change_password'] = False
+        if mode.get('read_only'):
+            result.update(can_read=True, can_edit=False, can_add=False, can_delete=False)
+            if request.method not in ('GET', 'HEAD', 'OPTIONS'):
+                raise HTTPException(403, 'To podgląd konta tylko do odczytu. Wróć na konto administratora, aby wprowadzać zmiany.')
         if request.url.path == '/api/me/password' or request.url.path.startswith(('/api/access-tokens', '/api/admin/')):
             raise HTTPException(403, 'W trybie klienta nie można zmieniać haseł, kluczy API ani zarządzać administracją. Wróć na własne konto.')
     expected = request.headers.get('x-account-id')
@@ -234,12 +242,16 @@ def setup(body: Credentials, response: Response):
     return result
 
 @app.post('/api/login')
-def login(body: Credentials, response: Response):
+def login(body: Credentials, response: Response, request: Request):
     with db() as c:
         row = c.execute('SELECT u.*,co.name AS company_name FROM users u JOIN companies co ON co.id=u.company_id WHERE u.name=?',(body.name.strip(),)).fetchone()
     stored = row['password'] if row else password_hash('dummy-password')
     if not hmac.compare_digest(password_hash(body.password,stored.split(':')[0]),stored) or not row or not row['active']:
         raise HTTPException(401,'Nieprawidłowa nazwa użytkownika lub hasło.')
+    # Replacing an existing browser login must also detach its old push account.
+    with db() as c:
+        c.execute('DELETE FROM push_subscriptions WHERE session_token=?',
+                  (digest(request.cookies.get('session', '')),))
     session(response,row['id'])
     return admin.public_account(row)
 
@@ -943,6 +955,7 @@ dictionary_excel.install(app, db, user, now)
 ai_commands.install(app, db, user, now)
 assistant.install(app, user)
 notes.install(app, db, user, now)
+flows.install(app, db, user, now)
 edelivery_connection.install(app, db, user, now)
 edelivery.install(app, db, user, now)
 client_mail.install(app, db, user, now)
@@ -952,17 +965,20 @@ surveys.install(app, db, user, now)
 audit.install(app, db, user)
 tasks.install(app, db, user, owned, now)
 mailing.install(app, db, user, owned, file_response, image_bytes, now, digest)
+webpush.install(app, db, user)
 
 # A built Vue frontend is served by Python from the same origin.
 if (ROOT / 'dist' / 'assets').exists():
     app.mount('/assets', StaticFiles(directory=ROOT/'dist'/'assets'),name='assets')
+if (ROOT / 'dist' / 'product').exists():
+    app.mount('/product', StaticFiles(directory=ROOT/'dist'/'product'),name='product')
 
 @app.get('/{path:path}',include_in_schema=False)
 def frontend(path: str):
     if path.startswith('api/'):
         raise HTTPException(404,'Nie znaleziono endpointu.')
-    if path in ('icon.svg','manifest.webmanifest','sw.js'):
-        return FileResponse(ROOT/'dist'/path)
+    if path in ('icon.svg','icon-192.png','icon-512.png','icon-maskable-512.png','manifest.webmanifest','sw.js','offline.html'):
+        return FileResponse(ROOT/'dist'/path, headers={'Cache-Control': 'no-cache'})
     index=ROOT/'dist'/'index.html'
     if not index.exists():
         raise HTTPException(503,'Uruchom frontend przez npm run dev lub zbuduj go przez npm run build.')

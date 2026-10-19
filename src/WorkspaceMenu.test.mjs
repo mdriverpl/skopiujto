@@ -12,7 +12,7 @@ function menu(storage = new Map(), user = { id: 'me', role: 'user' }, api, optio
   const events = [], captures = new Set(), calls = []
   const context = { computed, ref, watch, onBeforeUnmount() {}, defaultMenuOrder, normalizeMenuOrder, moveMenuItem,
     localStorage: { getItem: key => storage.get(key) || null, removeItem: key => storage.delete(key) } }
-  for (const icon of ['House', 'Mail', 'Sparkles', 'Inbox', 'Send', 'ShieldAlert', 'Trash2', 'Archive', 'ChevronDown', 'ClipboardList', 'CalendarDays', 'StickyNote', 'Files', 'ClipboardCheck', 'HardDrive', 'FileText', 'BookOpen', 'Users', 'Settings', 'X']) context[icon] = {}
+  for (const icon of ['House', 'Mail', 'Sparkles', 'Inbox', 'Send', 'ShieldAlert', 'Trash2', 'Archive', 'ChevronDown', 'ClipboardList', 'CalendarDays', 'StickyNote', 'Files', 'ClipboardCheck', 'HardDrive', 'FileText', 'BookOpen', 'Users', 'Settings', 'X', 'GitBranch']) context[icon] = {}
   runInNewContext(compiled, context)
   const save = async (path, method, body) => {
     if (path === '/dictionaries') return options.dictionaries || []
@@ -224,4 +224,13 @@ test('eDelivery settings opens and highlights Settings instead of Mail', () => {
   assert.equal(state.active('mail'), false)
   state.selectChild('edelivery-settings', { ctrlKey: false })
   assert.deepEqual(events, [['navigate', 'edelivery-settings'], ['close']])
+})
+
+test('Flow is available under Settings and highlights its parent', () => {
+  const { state, events } = menu(new Map(), { id: 'me', role: 'admin' }, undefined, { view: 'flows' })
+  assert.equal(state.active('settings'), true)
+  assert.equal(state.isExpanded('settings'), true)
+  assert.equal(state.visibleChildren('settings').some(item => item.id === 'flows'), true)
+  state.selectChild('flows', { ctrlKey: false })
+  assert.deepEqual(events, [['navigate', 'flows'], ['close']])
 })

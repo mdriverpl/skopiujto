@@ -187,11 +187,13 @@ test('drive shortcuts preselect the folder or file and close the dialog after as
     }, { initialTarget: target, dialogOnly: true })
     mount(); await new Promise(resolve => setImmediate(resolve))
     assert.equal(state.targetType.value, target.folder_id ? 'folder' : 'file')
+    assert.equal(state.draft.value.kind, target.folder_id ? 'folder_completion' : 'general')
     assert.equal(state.draft.value.folder_id, target.folder_id || '')
     assert.equal(state.draft.value.document_id, target.document_id || '')
     state.draft.value.title = 'Sprawdź'; state.draft.value.assignee_id = 'me'
     await state.create()
     assert.equal(calls.length, 2)
+    assert.equal(calls[1].body.kind, target.folder_id ? 'folder_completion' : 'general')
     assert.equal(calls[1].body.folder_id, target.folder_id || null)
     assert.equal(calls[1].body.document_id, target.document_id || null)
     assert.ok(events.some(event => event[0] === 'updated'))
@@ -284,4 +286,42 @@ test('deletion failure keeps task visible and declining confirmation does not ca
   const declined = panel(async () => { called = true }, {}, new Map(), () => false)
   await declined.state.deleteTask({ ...task, can_delete: true })
   assert.equal(called, false)
+})
+
+
+test('folder completion keeps its kind and folder when assigned', async () => {
+  const calls = []
+  const { state } = panel(async (path, method, body) => {
+    if (method) calls.push(body)
+    return path === '/sharing-options' ? { users: [] } : {}
+  }, { initialTarget: { folder_id: 'folder-one' }, dialogOnly: true })
+  await state.newTask()
+  state.draft.value.title = 'Complete folder'
+  state.draft.value.assignee_id = me.id
+  assert.equal(state.draft.value.kind, 'folder_completion')
+  await state.create()
+  assert.equal(calls[0].kind, 'folder_completion')
+  assert.equal(calls[0].folder_id, 'folder-one')
+  assert.equal(calls[0].document_id, null)
+  assert.equal(state.kinds.folder_completion, 'Uzupełnienie katalogu')
+})
+
+
+test('preview opens only an accessible folder and closes before navigation', () => {
+  const { state, events } = panel(async () => ({}))
+  state.data.value = { mine: [{ ...task, kind: 'folder_completion', folder_id: 'folder-one' }], sent: [], waiting: 1 }
+  state.previewKey.value = task.key
+  assert.equal(state.previewFolder.value.id, 'folder-one')
+  state.busy.value = true
+  state.openPreviewFolder()
+  assert.equal(events.length, 0)
+  state.busy.value = false
+  state.openPreviewFolder()
+  assert.equal(state.previewKey.value, null)
+  assert.deepEqual(events[0], ['open-folder', 'folder-one'])
+  state.data.value.mine[0].folder_id = 'parent'
+  state.previewKey.value = task.key
+  assert.equal(state.previewFolder.value, undefined)
+  state.openPreviewFolder()
+  assert.equal(events.length, 1)
 })

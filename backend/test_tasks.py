@@ -228,3 +228,14 @@ def test_delete_completed_self_task_keeps_linked_resource(app_client, target):
     with main.db() as con:
         table = 'documents' if target == 'document' else 'folders'
         assert con.execute('SELECT id FROM ' + table + ' WHERE id=?', (resource['id'],)).fetchone()
+
+def test_folder_completion_kind_validation():
+    from backend.tasks import TaskInput
+    from pydantic import ValidationError
+
+    task = TaskInput(title='Complete folder', assignee_id='me', kind='folder_completion', folder_id='folder')
+    assert task.kind == 'folder_completion'
+    assert task.folder_id == 'folder'
+    assert task.document_id is None
+    with pytest.raises(ValidationError):
+        TaskInput(title='Complete folder', assignee_id='me', kind='unknown')

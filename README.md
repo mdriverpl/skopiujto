@@ -117,36 +117,32 @@ API katalogu: `GET/POST /api/admin/companies`,
 `PATCH/DELETE /api/admin/companies/{id}`. `GET /api/me/company` zwraca tylko
 firmę bieżącego konta.
 
-W module **Użytkownicy i grupy** przycisk kosza usuwa konto po potwierdzeniu.
-Administrator może usuwać konta swojej firmy, a superadministrator — wszystkich firm.
-Nie można usunąć własnego konta, superadministratora ani ostatniego aktywnego
-administratora firmy. Konto z dokumentami lub innymi powiązanymi danymi wymaga
-wcześniejszego usunięcia tych danych; można też zamiast tego zablokować konto.
-Usunięcie kończy sesje, unieważnia klucze API i usuwa członkostwa oraz uprawnienia.
-API: `DELETE /api/admin/users/{id}` (204; 409 dla kont chronionych lub z danymi).
+W module **Użytkownicy i grupy** przycisk kosza usuwa dostęp użytkownika po
+potwierdzeniu, zachowując jego konto właściciela w archiwum. Dokumenty, pliki,
+katalogi, notatki, poczta i historia pozostają pod dotychczasowymi identyfikatorami.
+Zakładka **Usunięci** pozwala administratorowi otworzyć podgląd archiwalnego konta.
+Usunięty użytkownik nie może się zalogować; sesje, klucze API, członkostwa w grupach
+i indywidualne uprawnienia są unieważniane. Nie można usunąć siebie,
+superadministratora ani ostatniego aktywnego administratora firmy.
+API: `DELETE /api/admin/users/{id}`; archiwum: `GET /api/admin/users?include_deleted=true`.
 
-Superadministrator ma przy aktywnych kontach przycisk **Wejdź na konto**.
-Tryb klienta używa drugiego cookie HttpOnly i osobnej sesji, powiązanej z oryginalną
-sesją administratora; hasło klienta nie jest odczytywane ani zmieniane. Widoczny
-pasek wskazuje konto oraz firmę klienta i daje **Wróć na konto administratora**.
-Przełączenie przeładowuje aplikację, aby nie zachować danych lub formularzy
-poprzedniego konta. Tryb wygasa po maksymalnie 30 minutach i wymaga nadal aktywnego
-superadministratora. Konta nieaktywne i konto samego superadministratora są wyłączone.
+Administrator ma dostęp do odczytu dokumentów i folderów swojej firmy,
+w tym prywatnych i należących do usuniętych kont. Superadministrator ma odczyt
+we wszystkich firmach. Sam podgląd nie nadaje uprawnień do zmiany cudzych plików.
+**Podgląd konta** pozwala administratorowi obejrzeć zasoby konta aktywnego,
+zablokowanego albo usuniętego. Zwykły administrator ma tryb tylko do odczytu
+ograniczony do swojej firmy. Podgląd kont zablokowanych i usuniętych jest zawsze
+tylko do odczytu. Superadministrator zachowuje dotychczasowy tryb pracy na
+aktywnym koncie klienta. Nagłówek pokazuje rzeczywistego administratora,
+wybrane konto i przycisk **Wróć na konto administratora**.
 
-W trybie klienta obowiązują jego zwykłe uprawnienia do zasobów. Zmiany są rzeczywiste;
-blokujemy zarządzanie administracją, hasłami i kluczami API oraz kolejne wejście
-na inne konto. Konto z hasłem tymczasowym można obejrzeć bez zmiany jego hasła;
-wymóg pierwszej zmiany hasła w bazie pozostaje zachowany dla klienta.
-Zmiana firmy, reset hasła lub dezaktywacja klienta cofa jego sesje delegowane.
-Nagłówek `X-Account-ID` chroni żądania aplikacji przed użyciem starego kontekstu
-konta w innej karcie. Wylogowanie usuwa także oryginalną sesję administratora.
-
-**Historia wejść na konta** w administracji pokazuje ostatnie 100 wejść i powrotów,
-rzeczywistego administratora, klienta, firmę i czas. Historia zasobów wskazuje
-administratora działającego na koncie klienta jako autora zmian. API:
-`POST /api/admin/users/{id}/impersonate`, `POST /api/admin/impersonation/stop`,
-`GET /api/admin/impersonation/events`. Rozpoczęcie wymaga sesji przeglądarki
-superadministratora; klucze API nie mogą uruchamiać trybu klienta.
+Podgląd wymaga sesji przeglądarki i trwa maksymalnie 30 minut. Uprawnienia
+administratora i przynależność firmy są sprawdzane przy każdym żądaniu.
+W trybie tylko do odczytu zapis, usuwanie i wysyłanie są blokowane przez API;
+otwieranie poczty nie zmienia stanu przeczytania ani nie uruchamia skanowania.
+Historia wejść jest dostępna dla administratora swojej firmy i dla
+superadministratora we wszystkich firmach. API: `POST /api/admin/users/{id}/impersonate`,
+`POST /api/admin/impersonation/stop`, `GET /api/admin/impersonation/events`.
 
 Pierwsze konto utworzone podczas konfiguracji jest administratorem.
 Nowy użytkownik dodawany przez administratora musi mieć adres e-mail.
@@ -163,7 +159,7 @@ istniejące konto. Migracja zachowuje pliki i przypisuje ich autorów.
 
 Zakładka „Użytkownicy i grupy” pozwala tworzyć i edytować konta, resetować
 hasła, blokować konta, zmieniać role oraz zarządzać grupami i ich członkami.
-Zamiast usuwać konto, administrator je blokuje, zachowując autorstwo plików.
+Usunięcie lub zablokowanie konta zachowuje autorstwo plików.
 Blokada i reset hasła kończą sesje użytkownika. Nie można zablokować własnego
 konta ani odebrać sobie roli administratora.
 
@@ -639,3 +635,29 @@ Po aktualizacji uruchom ponownie backend, aby utworzyć tabele poczty, w tym `cl
 Hasła kont pocztowych są szyfrowane biblioteką cryptography (Fernet), nie są zwracane przez API i nie trafiają do konfiguracji jawnej w bazie. Klucz jest pobierany wyłącznie ze zmiennej środowiskowej `EDOCUMENTS_MAIL_SETTINGS_KEY`. Lokalnie backend wczytuje `.env` przy starcie; Docker Compose przekazuje `.env` do kontenera. Brak lub niepoprawna wartość blokuje zapis i odczyt haseł z błędem 503. Aplikacja nie tworzy ani nie odczytuje pliku klucza.
 
 Przy aktualizacji instalacji używającej `data/mail-settings.key` skopiuj jego dotychczasową zawartość do `EDOCUMENTS_MAIL_SETTINGS_KEY` w serwerowym `.env`. Zachowaj ten sam klucz wraz z kopiami bazy i na wszystkich instancjach, aby nadal odczytywać zapisane hasła. Zmiana klucza nie odszyfruje istniejących ustawień. Po zmianie `.env` odtwórz kontener poleceniem `docker compose up -d --force-recreate app`; samo `docker compose restart` nie odświeża zmiennych kontenera. Nowa tabela `client_mail_settings` powstaje podczas uruchomienia backendu.
+
+
+## Flow — projektowanie procesów
+
+**Ustawienia → Flow** otwiera firmową listę definicji procesów. Administrator
+może dodać, edytować i usunąć Flow; pozostali użytkownicy firmy mają podgląd.
+Formularz zapisuje nazwę, opis, zdarzenie początkowe (ręcznie, nowy e-mail lub
+nowy dokument) i uporządkowane kroki: akceptacja, zadanie, zapis dokumentu
+lub powiadomienie. Kroki mają odbiorcę (osobę albo grupę), katalog docelowy,
+termin i reakcję na odrzucenie zależnie od rodzaju. Przyciski strzałek zmieniają
+kolejność kroków. Przykład obiegu faktury uzupełnia formularz do dalszej edycji.
+
+Zapisane Flow są **szkicami**. Ta wersja nie wykonuje kroków automatycznie,
+nie obserwuje skrzynki i nie wysyła powiadomień na podstawie definicji.
+Wymaga to osobnego silnika wykonującego procesy. Wersja definicji chroni
+przed nadpisaniem równoczesnej edycji. API: `GET/POST /api/flows`,
+`GET /api/flows/options`, `PUT/DELETE /api/flows/{id}`. Aktualizacja i usunięcie
+wymagają bieżącego `version`; dane są odseparowane przez firmę.
+
+## PWA — Android i Windows
+
+W menu konta wybierz **Aplikacja i powiadomienia**, aby zainstalować aplikację,
+włączyć alerty o wiadomościach, zadaniach i terminach oraz zarządzać urządzeniami.
+Logowanie jest zwykłe, bez QR. Instalacja wymaga HTTPS (lokalnie: localhost).
+Push wymaga kluczy VAPID na serwerze i zgody na każdym urządzeniu.
+Instrukcja konfiguracji i ograniczenia: [PWA](backend/PWA.md).

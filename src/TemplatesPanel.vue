@@ -92,18 +92,18 @@ async function remove() {
         <div class="delete-actions"><button :disabled="busy" autofocus @click="deleting = null; error = ''">Anuluj</button><button class="delete-submit" :disabled="busy" @click="remove"><Trash2 :size="16" /> {{ busy ? 'Usuwanie…' : 'Usuń szablon' }}</button></div>
       </section>
     </div>
-    <div v-if="draft" class="modal-backdrop">
+    <Teleport to="body"><div v-if="draft" class="modal-backdrop template-modal-backdrop" @keydown.esc.stop="close">
       <section class="panel template-editor" role="dialog" aria-modal="true" aria-labelledby="template-editor-title">
-        <header class="template-editor-heading"><span class="editor-mark"><FileText :size="20" /></span><div><h2 id="template-editor-title">{{ mode === 'preview' ? draft.title : mode === 'edit' ? 'Edytuj szablon' : mode === 'copy' ? 'Utwórz kopię szablonu' : 'Nowy szablon' }}</h2><p>{{ mode === 'copy' ? 'Zapiszesz własną kopię w swoich szablonach.' : editable ? 'Nadaj treści własny styl.' : draft.category }}</p></div><button v-if="draft.id" class="icon-button" :disabled="busy" title="Historia zmian" aria-label="Historia szablonu" @click="emit('history', draft)"><History :size="18" /></button><button class="icon-button" :disabled="busy" aria-label="Zamknij szablon" @click="close"><X :size="20" /></button></header>
+        <header class="template-editor-heading"><span class="editor-mark template-editor-art" aria-hidden="true"><FileText :size="27" :stroke-width="1.5" /><span><Sparkles :size="12" /></span></span><div><h2 id="template-editor-title">{{ mode === 'preview' ? draft.title : mode === 'edit' ? 'Edytuj szablon' : mode === 'copy' ? 'Utwórz kopię szablonu' : 'Nowy szablon' }}</h2><p>{{ mode === 'copy' ? 'Zapiszesz własną kopię w swoich szablonach.' : editable ? 'Nadaj treści własny styl.' : draft.category }}</p></div><button v-if="draft.id" class="icon-button" :disabled="busy" title="Historia zmian" aria-label="Historia szablonu" @click="emit('history', draft)"><History :size="18" /></button><button class="icon-button" :disabled="busy" aria-label="Zamknij szablon" @click="close"><X :size="20" /></button></header>
         <form id="template-form" class="template-editor-body" @submit.prevent="save">
           <p v-if="error" class="error" role="alert">{{ error }}</p>
-          <div v-if="editable" class="template-fields"><label>Nazwa szablonu<input v-model="draft.title" :disabled="busy" required maxlength="200" placeholder="np. Umowa z klientem" /></label><label>Kategoria<input v-model="draft.category" :disabled="busy" maxlength="60" list="template-categories" /><datalist id="template-categories"><option v-for="item in categories" :key="item">{{ item }}</option></datalist></label><label class="description-field">Krótki opis<input v-model="draft.description" :disabled="busy" maxlength="500" placeholder="Do czego służy ten szablon?" /></label></div>
+          <div v-if="editable" class="template-fields"><label>Nazwa szablonu<input v-model="draft.title" autofocus :disabled="busy" required maxlength="200" placeholder="np. Umowa z klientem" /></label><label>Kategoria<input v-model="draft.category" :disabled="busy" maxlength="60" list="template-categories" /><datalist id="template-categories"><option v-for="item in categories" :key="item">{{ item }}</option></datalist></label><label class="description-field">Krótki opis<input v-model="draft.description" :disabled="busy" maxlength="500" placeholder="Do czego służy ten szablon?" /></label></div>
           <p v-else-if="draft.description" class="preview-description">{{ draft.description }}</p>
           <RichTextEditor :key="`${draft.id || 'new'}-${mode}`" v-model="draft.rich_content" v-model:plain-text="draft.content" :editable="editable && !busy" label="Treść szablonu" />
         </form>
         <footer class="template-editor-footer"><span>{{ editable ? 'Formatowanie zostanie zapisane w szablonie.' : 'Wzór gotowy do dostosowania.' }}</span><div><button :disabled="busy" class="text-button" @click="close">{{ editable ? 'Anuluj' : 'Zamknij' }}</button><button v-if="editable" class="primary" type="submit" form="template-form" :disabled="busy || !draft.title.trim()"><Save :size="16" /> {{ busy ? 'Zapisywanie…' : mode === 'copy' || mode === 'create' ? 'Zapisz nowy szablon' : 'Zapisz zmiany' }}</button><template v-else><button v-if="draft.permissions?.edit || canAdd" :disabled="busy" @click="open(draft, draft.permissions?.edit ? 'edit' : 'copy')"><Pencil :size="16" /> {{ draft.permissions?.edit ? 'Edytuj' : 'Utwórz kopię' }}</button><button v-if="canAdd" class="primary" :disabled="busy" @click="useTemplate(draft)"><Plus :size="16" /> Utwórz dokument</button></template></div></footer>
       </section>
-    </div>
+    </div></Teleport>
   </section>
 </template>
 
@@ -156,14 +156,14 @@ h1 span { display: inline-block; font-size: 12px; background: var(--accent-soft)
 .templates-empty { text-align: center; padding: 50px 20px; color: var(--accent); }
 .templates-empty h2 { font-size: 15px; color: var(--secondary); margin: 16px 0 8px; }
 .templates-empty p { font-size: 12px; color: var(--muted); }
-.template-editor { width: 1100px; max-width: 100%; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; border-radius: 18px; }
+.template-editor { width: min(880px, 100%); max-width: 100%; max-height: min(820px, calc(100dvh - 32px)); display: flex; flex-direction: column; overflow: hidden; border-radius: 18px; }
 .template-editor-heading { display: flex; align-items: center; gap: 12px; padding: 20px 24px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .editor-mark { display: flex; background: var(--accent-soft); color: var(--accent); padding: 11px; border-radius: 11px; }
 .template-editor-heading > div { flex: 1; min-width: 0; }
 .template-editor-heading h2 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
 .template-editor-heading p { font-size: 11px; color: var(--muted); margin: 5px 0 0; }
-.template-editor-body { overflow-y: auto; padding: 22px 24px; min-height: 0; gap: 20px; }
-.template-fields { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
+.template-editor-body { overflow-y: auto; padding: 16px 20px; min-height: 0; gap: 14px; flex: 1; overscroll-behavior: contain; }
+.template-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 10px; }
 .template-fields label { font-size: 11px; color: var(--muted); }
 .template-fields input { font-size: 13px; border-color: var(--border); }
 .description-field { grid-column: 1 / -1; }
@@ -173,4 +173,23 @@ h1 span { display: inline-block; font-size: 12px; background: var(--accent-soft)
 .template-editor-footer > div { display: flex; gap: 12px; flex-wrap: wrap; }
 .template-editor-footer button { font-size: 12px; }
 @media (max-width: 600px) { .templates-heading { align-items: flex-start; flex-wrap: wrap; } .templates-toolbar { flex-wrap: wrap; } .templates-toolbar .search { width: 100%; } .template-fields { grid-template-columns: 1fr; } .template-editor-heading, .template-editor-body, .template-editor-footer { padding: 16px; } .template-editor-footer { flex-wrap: wrap; } .template-editor-footer > div { margin-left: auto; } }
+
+.template-modal-backdrop { z-index:100; padding:16px; backdrop-filter:blur(4px); }
+.template-editor { box-shadow:0 18px 60px #0002; border-radius:16px; }
+.template-editor > .template-editor-heading { padding:14px 20px; gap:12px; background:linear-gradient(120deg,var(--accent-soft),var(--surface) 80%); }
+.template-editor-art { position:relative; padding:11px; border:1px solid var(--border); border-radius:13px; flex-shrink:0; }
+.template-editor-art > span { position:absolute; right:-4px; bottom:-3px; display:flex; padding:4px; border:2px solid var(--surface); border-radius:7px; color:var(--accent); background:var(--accent-soft); }
+.template-editor-heading .icon-button { padding:7px; flex-shrink:0; }
+.template-fields label { gap:5px; font-weight:400; }
+.template-fields input { padding:8px 10px; font-size:12px; border-radius:7px; }
+.template-editor-body :deep(.rich-editor) { flex-shrink:0; border-radius:10px; }
+.template-editor-body :deep(.formatting-toolbar) { padding:6px; }
+.template-editor-body :deep(.paper-area) { padding:14px; }
+.template-editor-body :deep(.text-paper .tiptap) { min-height:220px; padding:24px 30px; font-size:14px; }
+.template-editor-body :deep(.readonly .text-paper .tiptap) { min-height:100px; }
+.template-editor-footer { padding:12px 20px; gap:10px; background:var(--surface); }
+.template-editor-footer > span { font-size:10px; }
+.template-editor-footer > div { gap:8px; }
+.template-editor-footer button { padding:8px 12px; font-size:11px; }
+@media(max-width:600px) { .template-modal-backdrop { padding:10px; }.template-editor { max-height:calc(100dvh - 20px); }.template-editor > .template-editor-heading,.template-editor-body,.template-editor-footer { padding:12px 14px; }.template-editor-heading h2 { font-size:16px; }.template-editor-art { padding:9px; }.template-editor-footer > span { display:none; }.template-editor-body :deep(.paper-area) { padding:8px; }.template-editor-body :deep(.text-paper .tiptap) { padding:16px; min-height:180px; }.template-editor-footer > div { justify-content:flex-end; width:100%; }.template-fields { grid-template-columns:minmax(0,1fr); } }
 </style>

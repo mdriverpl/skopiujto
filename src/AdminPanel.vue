@@ -1,21 +1,29 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { Plus, Users, Shield, X, Trash2, Pencil } from 'lucide-vue-next'
+import { Plus, Users, Shield, X, Trash2, Pencil, Mail, Building2, KeyRound, Eye } from 'lucide-vue-next'
 
 const props = defineProps({ api: { type: Function, required: true }, currentUser: { type: Object, required: true } })
 const emit = defineEmits(['updated', 'impersonated'])
-const accounts = ref([])
+const accounts = ref([]), showDeleted = ref(false)
+const activeAccounts = computed(() => accounts.value.filter(account => !account.deleted_at))
+const deletedAccounts = computed(() => accounts.value.filter(account => account.deleted_at))
+const visibleAccounts = computed(() => showDeleted.value ? deletedAccounts.value : activeAccounts.value)
 const groups = ref([])
 const folders = ref([])
 const companies = ref([]), groupCompany = ref(props.currentUser.company_id || '')
-const groupAccounts = computed(() => accounts.value.filter(account => account.company_id === selectedGroup.value?.company_id))
+const groupAccounts = computed(() => activeAccounts.value.filter(account => account.company_id === selectedGroup.value?.company_id))
 const groupFolders = computed(() => folders.value.filter(folder => folder.company_id === selectedGroup.value?.company_id))
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
 const activeTab = ref('users')
 const sessionHistory = ref([]), historyOpen = ref(false)
-const accountForm = ref(null)
+const accountForm = ref(null), accountDialog = ref(null)
+watch(accountForm, value => {
+  if (value) accountDialog.value?.showModal()
+  else accountDialog.value?.close()
+}, { flush: 'post' })
+function closeAccount() { if (!busy.value) accountForm.value = null }
 const groupName = ref('')
 const selectedGroupId = ref('')
 const selectedGroup = computed(() => groups.value.find(group => group.id === selectedGroupId.value))
@@ -24,7 +32,7 @@ const grant = ref({ can_read: true, can_edit: false, can_add: false, can_delete:
 const rights = [{ key: 'can_read', label: 'Odczyt' }, { key: 'can_edit', label: 'Edycja' }, { key: 'can_add', label: 'Dodawanie' }, { key: 'can_delete', label: 'Usuwanie' }]
 
 async function load() {
-  const results = await Promise.all([props.api('/admin/users'), props.api('/admin/groups'), props.api('/admin/folders'), props.api(props.currentUser.is_superadmin ? '/admin/companies' : '/me/company')])
+  const results = await Promise.all([props.api('/admin/users?include_deleted=true'), props.api('/admin/groups'), props.api('/admin/folders'), props.api(props.currentUser.is_superadmin ? '/admin/companies' : '/me/company')])
   ;[accounts.value, groups.value, folders.value] = results
   companies.value = props.currentUser.is_superadmin ? results[3] : [results[3]]
   if (!selectedGroup.value) selectedGroupId.value = groups.value[0]?.id || ''
@@ -38,13 +46,14 @@ async function run(action) {
   finally { busy.value = false }
 }
 async function enterAccount(account) {
-  if (!props.currentUser.is_superadmin || !account.active || account.id === props.currentUser.id || account.is_superadmin) return
+  if (busy.value || props.currentUser.role !== 'admin' || account.id === props.currentUser.id || account.is_superadmin) return
   await run(async () => { await props.api(`/admin/users/${account.id}/impersonate`, 'POST'); emit('impersonated') })
 }
 async function loadSessionHistory() {
   await run(async () => { sessionHistory.value = await props.api('/admin/impersonation/events'); historyOpen.value = true; activeTab.value = 'history' })
 }
 function editAccount(account) {
+  if (busy.value) return
   error.value = ''
   accountForm.value = account ? { ...account, email: account.email || '', password: '' } : { name: '', email: '', role: 'user', company_id: props.currentUser.company_id, active: true, can_read: true, can_edit: false, can_add: false, can_delete: false }
 }
@@ -67,11 +76,11 @@ async function saveAccount() {
 }
 async function deleteAccount(account) {
   if (busy.value || account.id === props.currentUser.id || account.is_superadmin) return
-  if (!window.confirm(`Usunąć użytkownika „${account.name}”? Konto i dostęp zostaną trwale usunięte. Konta z powiązanymi danymi nie można usunąć — można je zablokować.`)) return
+  if (!window.confirm(`Usunąć użytkownika „${account.name}”? Użytkownik straci możliwość logowania. Dokumenty, pliki i historia pozostaną zachowane i dostępne w podglądzie administratora.`)) return
   await run(async () => {
     await props.api(`/admin/users/${account.id}`, 'DELETE')
     await load()
-    notice.value = 'Usunięto konto użytkownika.'
+    notice.value = 'Usunięto konto użytkownika. Dokumenty i historia zostały zachowane.'
     emit('updated')
   })
 }
@@ -139,9 +148,9 @@ onMounted(() => run(load))
     <Teleport to="#workspace-title"><div><h1>Użytkownicy i grupy</h1><p class="admin-subtitle">Zarządzaj kontami, zespołami i dostępem do dokumentów.</p></div></Teleport>
     <nav class="admin-toolbar" aria-label="Sekcje administracji">
       <div class="admin-tabs" role="group" aria-label="Widok administracji">
-        <button :aria-pressed="activeTab === 'users'" @click="activeTab = 'users'"><Users :size="17" /> Użytkownicy <span>{{ accounts.length }}</span></button>
+        <button :aria-pressed="activeTab === 'users'" @click="activeTab = 'users'"><Users :size="17" /> Użytkownicy <span>{{ activeAccounts.length }}</span></button>
         <button :aria-pressed="activeTab === 'groups'" @click="activeTab = 'groups'"><Shield :size="17" /> Grupy i dostęp <span>{{ groups.length }}</span></button>
-        <button v-if="currentUser.is_superadmin" :aria-pressed="activeTab === 'history'" :disabled="busy" @click="loadSessionHistory">Historia wejść</button>
+        <button v-if="currentUser.role === 'admin'" :aria-pressed="activeTab === 'history'" :disabled="busy" @click="loadSessionHistory">Historia wejść</button>
       </div>
       <button v-if="activeTab === 'users'" class="primary" :disabled="busy" @click="editAccount()"><Plus :size="17" /> Dodaj użytkownika</button>
     </nav>
@@ -154,11 +163,12 @@ onMounted(() => run(load))
     </section>
 
     <section v-if="activeTab === 'users'" class="panel admin-section users-section">
+      <div class="account-archive-switch" role="group" aria-label="Lista kont"><button :aria-pressed="!showDeleted" @click="showDeleted = false">Użytkownicy <span>{{ activeAccounts.length }}</span></button><button :aria-pressed="showDeleted" @click="showDeleted = true">Usunięci <span>{{ deletedAccounts.length }}</span></button></div>
       <div class="admin-section-heading"><div><h2>Konta użytkowników</h2><p>Role, status konta i uprawnienia do własnych zasobów.</p></div></div>
       <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Użytkownik</th><th>Firma</th><th>Rola</th><th>Status</th><th>Uprawnienia</th><th class="user-actions-heading">Akcje</th></tr></thead><tbody>
-        <tr v-for="account in accounts" :key="account.id"><td><strong>{{ account.name }}</strong><small v-if="account.email" class="account-email">{{ account.email }}</small></td><td>{{ account.company_name }}</td><td>{{ account.is_superadmin ? 'Superadministrator' : account.role === 'admin' ? 'Administrator' : 'Użytkownik' }}</td><td><span class="badge" :class="{ ready: account.active }">{{ account.active ? 'Aktywny' : 'Zablokowany' }}</span></td><td><div class="account-rights"><span v-for="right in rights.filter(right => account[right.key])" :key="right.key" class="permission-tag">{{ right.label }}</span></div></td><td><div class="user-actions"><button v-if="currentUser.is_superadmin && account.id !== currentUser.id && !account.is_superadmin" :disabled="busy || !account.active" @click="enterAccount(account)">Wejdź na konto</button><button class="icon-button" :disabled="busy || (account.is_superadmin && !currentUser.is_superadmin)" :aria-label="`Edytuj użytkownika ${account.name}`" title="Edytuj użytkownika" @click="editAccount(account)"><Pencil :size="17" /></button><button v-if="account.id !== currentUser.id && !account.is_superadmin" class="icon-button delete-button" :disabled="busy" :aria-label="`Usuń użytkownika ${account.name}`" title="Usuń użytkownika" @click="deleteAccount(account)"><Trash2 :size="17" /></button></div></td></tr>
-      </tbody></table><p v-if="!accounts.length" class="admin-empty">Brak użytkowników.</p></div>
-      <p class="admin-footnote">Uprawnienia konta dotyczą własnych zasobów. Dostęp do wspólnych folderów nadaj przez grupy. Zablokowanie konta natychmiast kończy jego sesje.</p>
+        <tr v-for="account in visibleAccounts" :key="account.id"><td><strong>{{ account.name }}</strong><small v-if="account.email" class="account-email">{{ account.email }}</small></td><td>{{ account.company_name }}</td><td>{{ account.is_superadmin ? 'Superadministrator' : account.role === 'admin' ? 'Administrator' : 'Użytkownik' }}</td><td><span class="badge" :class="{ ready: account.active }">{{ account.deleted_at ? 'Usunięty' : account.active ? 'Aktywny' : 'Zablokowany' }}</span></td><td><div class="account-rights"><span v-for="right in rights.filter(right => account[right.key])" :key="right.key" class="permission-tag">{{ right.label }}</span></div></td><td><div class="user-actions"><button v-if="account.id !== currentUser.id && !account.is_superadmin" :disabled="busy" @click="enterAccount(account)">{{ !currentUser.is_superadmin || !account.active || account.deleted_at ? 'Podgląd konta' : 'Wejdź na konto' }}</button><button v-if="!account.deleted_at" class="icon-button" :disabled="busy || (account.is_superadmin && !currentUser.is_superadmin)" :aria-label="`Edytuj użytkownika ${account.name}`" title="Edytuj użytkownika" @click="editAccount(account)"><Pencil :size="17" /></button><button v-if="!account.deleted_at && account.id !== currentUser.id && !account.is_superadmin" class="icon-button delete-button" :disabled="busy" :aria-label="`Usuń użytkownika ${account.name}`" title="Usuń użytkownika" @click="deleteAccount(account)"><Trash2 :size="17" /></button></div></td></tr>
+      </tbody></table><p v-if="!visibleAccounts.length" class="admin-empty">{{ showDeleted ? 'Brak usuniętych użytkowników.' : 'Brak użytkowników.' }}</p></div>
+      <p class="admin-footnote">Administrator może przeglądać dokumenty swojej firmy. Usunięcie konta odbiera dostęp użytkownikowi, ale zachowuje jego zasoby w zakładce „Usunięci”. Podgląd konta zablokowanego lub usuniętego działa tylko do odczytu.</p>
     </section>
 
     <section v-if="activeTab === 'groups'" class="panel admin-section groups-section">
@@ -193,18 +203,25 @@ onMounted(() => run(load))
       </div>
     </section>
   </section>
-  <div v-if="accountForm" class="modal-backdrop"><section class="panel editor" role="dialog" aria-modal="true" aria-labelledby="account-title"><div class="editor-heading"><h2 id="account-title">{{ accountForm.id ? 'Edytuj użytkownika' : 'Nowy użytkownik' }}</h2><button class="icon-button" :disabled="busy" aria-label="Zamknij" @click="accountForm = null"><X :size="21" /></button></div><p v-if="error" class="error" role="alert">{{ error }}</p>
-    <form @submit.prevent="saveAccount">
-      <label>Nazwa użytkownika<input v-model="accountForm.name" required minlength="2" maxlength="80" autocomplete="off" /></label>
-      <label>Firma<select v-model="accountForm.company_id" required :disabled="busy || !currentUser.is_superadmin"><option v-for="company in companies" :key="company.id" :value="company.id">{{ company.name }}</option></select></label>
-      <p v-if="currentUser.is_superadmin && accountForm.id" class="muted">Zmiana firmy usuwa członkostwa w grupach i kończy sesje użytkownika. Jego dokumenty pozostają przypisane do konta.</p>
-      <label>Adres e-mail<input v-model="accountForm.email" type="email" :required="!accountForm.id" maxlength="254" autocomplete="email" /></label>
-      <p v-if="!accountForm.id" class="muted">Wyślemy na ten adres wygenerowane hasło tymczasowe. Przy pierwszym logowaniu użytkownik ustawi własne hasło.</p>
-      <label v-if="accountForm.id">Nowe hasło tymczasowe (pozostaw puste, aby zachować obecne)<input v-model="accountForm.password" type="password" minlength="10" maxlength="200" autocomplete="new-password" /></label>
-      <p v-if="accountForm.id && accountForm.password" class="muted">Przekaż hasło użytkownikowi. Przy kolejnym logowaniu będzie musiał je zmienić.</p>
-      <label>Rola<select v-model="accountForm.role" :disabled="accountForm.id === currentUser.id"><option value="user">Użytkownik</option><option value="admin">Administrator</option></select></label><label v-if="accountForm.id" class="check-label"><input v-model="accountForm.active" type="checkbox" :disabled="accountForm.id === currentUser.id" /> Konto aktywne</label><fieldset><legend>Uprawnienia do własnych plików i folderów</legend><div class="permission-checks"><label v-for="right in rights" :key="right.key" class="check-label"><input v-model="accountForm[right.key]" type="checkbox" /> {{ right.label }}</label></div></fieldset><p class="muted">Nowe konto ma domyślnie tylko odczyt. Dostęp do zasobów innych osób nadaj przez grupy.</p><div class="editor-actions"><button type="button" :disabled="busy" @click="accountForm = null">Anuluj</button><button class="primary" type="submit" :disabled="busy">Zapisz użytkownika</button></div>
+  <dialog ref="accountDialog" class="account-dialog" aria-labelledby="account-title" @cancel.prevent="closeAccount">
+    <form v-if="accountForm" @submit.prevent="saveAccount">
+      <header class="account-dialog-heading"><span class="account-art" aria-hidden="true"><Users :size="27" :stroke-width="1.5" /><span><Shield :size="11" /></span></span><div><small>KONTO I UPRAWNIENIA</small><h2 id="account-title">{{ accountForm.id ? 'Edytuj użytkownika' : 'Nowy użytkownik' }}</h2></div><button type="button" class="icon-button" :disabled="busy" aria-label="Zamknij" @click="closeAccount"><X :size="18" /></button></header>
+      <div class="account-dialog-body"><p v-if="error" class="error" role="alert">{{ error }}</p><fieldset class="account-fields" :disabled="busy">
+        <label><span class="account-field-label"><Users :size="13" /> Nazwa użytkownika</span><input v-model="accountForm.name" autofocus required minlength="2" maxlength="80" autocomplete="off" /></label>
+        <label><span class="account-field-label"><Mail :size="13" /> Adres e-mail</span><input v-model="accountForm.email" type="email" :required="!accountForm.id" maxlength="254" autocomplete="email" /></label>
+        <label><span class="account-field-label"><Building2 :size="13" /> Firma</span><select v-model="accountForm.company_id" required :disabled="!currentUser.is_superadmin"><option v-for="company in companies" :key="company.id" :value="company.id">{{ company.name }}</option></select></label>
+        <label><span class="account-field-label"><Shield :size="13" /> Rola</span><select v-model="accountForm.role" :disabled="accountForm.id === currentUser.id"><option value="user">Użytkownik</option><option value="admin">Administrator</option></select></label>
+        <p v-if="currentUser.is_superadmin && accountForm.id" class="account-hint account-wide">Zmiana firmy usuwa członkostwa w grupach i kończy sesje użytkownika. Dokumenty pozostają przypisane do konta.</p>
+        <p v-if="!accountForm.id" class="account-hint account-wide">Wyślemy na podany e-mail hasło tymczasowe. Przy pierwszym logowaniu użytkownik ustawi własne hasło.</p>
+        <label v-if="accountForm.id" class="account-wide"><span class="account-field-label"><KeyRound :size="13" /> Nowe hasło tymczasowe</span><input v-model="accountForm.password" type="password" minlength="10" maxlength="200" autocomplete="new-password" /><small>Pozostaw puste, aby zachować obecne hasło.</small></label>
+        <p v-if="accountForm.id && accountForm.password" class="account-hint account-wide">Przekaż hasło użytkownikowi. Przy kolejnym logowaniu będzie musiał je zmienić.</p>
+        <label v-if="accountForm.id" class="check-label account-active account-wide"><input v-model="accountForm.active" type="checkbox" :disabled="accountForm.id === currentUser.id" /><span>Konto aktywne</span></label>
+        <fieldset class="account-permissions account-wide"><legend><Shield :size="13" /> Uprawnienia do własnych plików i folderów</legend><div class="account-permission-grid"><label v-for="right in rights" :key="right.key" class="check-label"><input v-model="accountForm[right.key]" type="checkbox" /><component :is="{ can_read: Eye, can_edit: Pencil, can_add: Plus, can_delete: Trash2 }[right.key]" :size="14" aria-hidden="true" />{{ right.label }}</label></div></fieldset>
+        <p class="account-hint account-wide">Dostęp do zasobów innych osób nadaj przez grupy.</p>
+      </fieldset></div>
+      <footer class="account-dialog-footer"><button type="button" :disabled="busy" @click="closeAccount">Anuluj</button><button class="primary" type="submit" :disabled="busy"><Pencil v-if="accountForm.id" :size="14" /><Plus v-else :size="15" />{{ busy ? 'Zapisywanie…' : accountForm.id ? 'Zapisz zmiany' : 'Dodaj użytkownika' }}</button></footer>
     </form>
-  </section></div>
+  </dialog>
 </template>
 
 <style scoped>
@@ -275,4 +292,40 @@ h1 { margin:0 0 8px; font-size:25px; }
 .admin-empty { padding:18px 0; text-align:center; font-size:12px; line-height:1.7; color:var(--muted); }
 @media(max-width:1200px) { .group-columns { grid-template-columns:1fr; }.member-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:700px) { .admin-section { padding:18px; }.group-create.with-company,.group-create { grid-template-columns:1fr; }.group-create button { justify-self:start; }.group-selection { grid-template-columns:1fr; }.group-selection button { justify-self:start; }.member-grid { grid-template-columns:1fr; }.group-card { padding:16px; }.admin-tabs { width:100%; }.admin-tabs button { flex:1; padding:10px; }.admin-toolbar > .primary { width:100%; }.grant-submit button { width:100%; } }
+
+.account-dialog { width:min(560px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); box-sizing:border-box; padding:0; border:1px solid var(--border); border-radius:16px; color:var(--text); background:var(--surface); box-shadow:0 22px 65px #0002; }
+.account-dialog[open] { display:flex; flex-direction:column; }
+.account-dialog::backdrop { background:#13213966; backdrop-filter:blur(4px); }
+.account-dialog > form { display:flex; flex-direction:column; gap:0; min-height:0; overflow:hidden; }
+.account-dialog-heading { display:flex; align-items:center; gap:13px; padding:15px 18px; flex-shrink:0; border-bottom:1px solid var(--border); background:linear-gradient(120deg,var(--accent-soft),var(--surface) 80%); }
+.account-art { display:flex; padding:11px; position:relative; border:1px solid var(--border); border-radius:13px; background:var(--accent-soft); color:var(--accent); flex-shrink:0; }
+.account-art > span { display:flex; position:absolute; right:-4px; bottom:-3px; padding:4px; border:2px solid var(--surface); border-radius:7px; background:var(--accent-soft); }
+.account-dialog-heading > div { flex:1; min-width:0; }
+.account-dialog-heading small { color:var(--accent); font-size:9px; letter-spacing:.5px; }
+.account-dialog-heading h2 { margin:5px 0 0; font-size:17px; font-weight:600; }
+.account-dialog-heading > button { padding:7px; align-self:flex-start; }
+.account-dialog-body { overflow:auto; min-height:0; padding:18px; overscroll-behavior:contain; }
+.account-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:13px 14px; border:0; border-radius:0; padding:0; margin:0; min-width:0; }
+.account-dialog label { min-width:0; font-size:11px; font-weight:400; gap:6px; color:var(--secondary); }
+.account-field-label { display:flex; align-items:center; gap:5px; }
+.account-field-label svg { color:var(--muted); }
+.account-dialog input:not([type='checkbox']),.account-dialog select { width:100%; min-width:0; padding:8px 10px; border-radius:7px; font-size:12px; }
+.account-dialog label > small { color:var(--muted); font-size:10px; line-height:1.5; }
+.account-wide { grid-column:1 / -1; }
+.account-hint { color:var(--muted); font-size:10px; line-height:1.65; margin:0; }
+.account-active { display:flex; flex-direction:row; align-items:center; padding:2px 0; }
+.account-dialog input[type='checkbox'] { width:14px; height:14px; margin:0; accent-color:var(--accent); flex-shrink:0; }
+.account-permissions { min-width:0; border:1px solid var(--border); border-radius:10px; background:var(--surface-soft); padding:12px; }
+.account-permissions legend { padding:0 5px; font-size:10px; color:var(--secondary); line-height:1.6; }
+.account-permissions legend svg { vertical-align:-2px; margin-right:4px; color:var(--accent); }
+.account-permission-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; }
+.account-permission-grid .check-label { display:flex; flex-direction:row; align-items:center; gap:8px; font-size:11px; }
+.account-permission-grid svg { color:var(--muted); flex-shrink:0; }
+.account-dialog-footer { display:flex; align-items:center; justify-content:flex-end; gap:8px; border-top:1px solid var(--border); padding:12px 18px; flex-shrink:0; }
+.account-dialog-footer button { font-size:12px; padding:8px 12px; }
+@media(max-width:480px) { .account-dialog { width:calc(100vw - 20px); max-height:calc(100dvh - 20px); }.account-dialog-heading,.account-dialog-body,.account-dialog-footer { padding:14px; }.account-fields { grid-template-columns:minmax(0,1fr); gap:12px; }.account-wide { grid-column:1; }.account-dialog-heading h2 { font-size:16px; } }
+.account-archive-switch { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:18px; }
+.account-archive-switch button { padding:7px 11px; font-size:11px; background:transparent; border-color:transparent; color:var(--muted); }
+.account-archive-switch button[aria-pressed='true'] { color:var(--accent); background:var(--accent-soft); }
+.account-archive-switch span { font-size:10px; opacity:.8; margin-left:4px; }
 </style>

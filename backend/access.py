@@ -28,6 +28,8 @@ def permissions(con, current, folder_id, owner_id=None):
     placeholders = ','.join('?' for _ in scopes)
     owner = con.execute('SELECT company_id FROM users WHERE id=?', (resource_owner or current['id'],)).fetchone()
     company_id = owner['company_id'] if owner else current.get('company_id')
+    if current.get('role') == 'admin' and (current.get('is_superadmin') or company_id == current.get('company_id')):
+        result['read'] = True
     rows = list(con.execute(f'''SELECT p.can_read,p.can_edit,p.can_add,p.can_delete FROM group_permissions p
       JOIN group_members m ON m.group_id=p.group_id
       JOIN groups g ON g.id=p.group_id
@@ -37,6 +39,8 @@ def permissions(con, current, folder_id, owner_id=None):
     for row in rows:
         for action in ACTIONS:
             result[action] = result[action] or bool(row['can_' + action])
+    if current.get('impersonation', {}).get('read_only'):
+        result.update(edit=False, add=False, delete=False)
     return result
 
 def require(rights, action):

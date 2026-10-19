@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { House, Mail, Sparkles, Inbox, Send, ShieldAlert, Trash2, Archive, ChevronDown, ClipboardList, CalendarDays, StickyNote, Files, ClipboardCheck, FileText, BookOpen, Users, Settings, X } from 'lucide-vue-next'
+import { House, Mail, Sparkles, Inbox, Send, ShieldAlert, Trash2, Archive, ChevronDown, ClipboardList, CalendarDays, StickyNote, Files, ClipboardCheck, FileText, BookOpen, Users, Settings, X, GitBranch } from 'lucide-vue-next'
 import { defaultMenuOrder, normalizeMenuOrder, moveMenuItem } from './menuOrder.js'
 
 const props = defineProps({ user: Object, api: Function, view: String, open: Boolean, tasksWaiting: Number, activeSurveys: Number, mailFolder: String, dictionaryId: String, dictionaryRevision: Number })
@@ -25,15 +25,15 @@ async function loadDictionaries() {
 }
 const groups = {
   mail: ['mail', 'edelivery'], planning: ['calendar', 'tasks', 'notes'],
-  documents: ['documents', 'surveys', 'templates', 'active', 'drive'], dictionaries: ['dictionaries'], settings: ['admin', 'mail-settings', 'edelivery-settings']
+  documents: ['documents', 'surveys', 'templates', 'active', 'drive'], dictionaries: ['dictionaries'], settings: ['admin', 'mail-settings', 'edelivery-settings', 'flows', 'pwa']
 }
 const children = {
   planning: [{ id: 'calendar', label: 'Terminarz', icon: CalendarDays }, { id: 'tasks', label: 'Zadania', icon: ClipboardList }, { id: 'notes', label: 'Notatki', icon: StickyNote }],
   documents: [{ id: 'documents', label: 'Dokumenty', icon: Files }, { id: 'surveys', label: 'Ankiety', icon: ClipboardCheck }, { id: 'templates', label: 'Szablony', icon: FileText }],
-  settings: [{ id: 'admin', label: 'Użytkownicy i grupy', icon: Users }, { id: 'mail-settings', label: 'Ustawienia poczty', icon: Mail }, { id: 'edelivery-settings', label: 'Ustawienia eDoręczeń', icon: Mail }]
+  settings: [{ id: 'pwa', label: 'Aplikacja i powiadomienia', icon: Settings }, { id: 'flows', label: 'Flow', icon: GitBranch }, { id: 'admin', label: 'Użytkownicy i grupy', icon: Users }, { id: 'mail-settings', label: 'Ustawienia poczty', icon: Mail }, { id: 'edelivery-settings', label: 'Ustawienia eDoręczeń', icon: Mail }]
 }
 const canManageUsers = computed(() => props.user?.role === 'admin' && !props.user?.impersonation)
-const visibleChildren = id => children[id]?.filter(item => item.id !== 'admin' || canManageUsers.value) || []
+const visibleChildren = id => children[id]?.filter(item => (item.id !== 'admin' || canManageUsers.value) && (item.id !== 'pwa' || !props.user?.impersonation)) || []
 const isExpanded = id => id === 'mail' ? mailExpanded.value : expandedGroups.value[id]
 const mailFolders = [
   { id: 'analysis', label: 'Analiza AI', icon: Sparkles },

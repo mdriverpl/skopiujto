@@ -7,6 +7,7 @@ import ChannelMessageDialog from './ChannelMessageDialog.vue'
 import { Handshake, UserRound, Megaphone, Bell, Ban } from 'lucide-vue-next'
 import { ClipboardPlus, Mail, Users, MessageSquare, Search, Sparkles, Settings, Plus, Upload, RefreshCw, Star, Reply, Forward, Trash2, Archive, Paperclip, Inbox, Send, FileText, ShieldAlert, ShieldCheck, Building2, Landmark, HardDrive, FolderPlus, X, Download, ChevronLeft, List, LayoutGrid, CheckSquare, Lightbulb, AlertCircle, Pin } from 'lucide-vue-next'
 const props = defineProps({ api: Function, currentUser: Object, initialFolder: String, folderRequest: Number, initialMessageId: String, unified: Boolean })
+const readOnly = computed(() => !!props.currentUser?.impersonation?.read_only)
 const emit = defineEmits(['folder-change', 'message-opened', 'open-settings', 'navigate', 'task-created'])
 const taskMessage = ref(null)
 const composerChannel = ref('email')
@@ -182,6 +183,7 @@ async function load() {
   if (!selected.value) selectedId.value = null
 }
 async function refresh() {
+  if (readOnly.value) { await load(); return }
   if (!settings.value) settings.value = await props.api('/client-mail/settings')
   if (!settings.value.account.imap.enabled) {
     await load()
@@ -265,6 +267,7 @@ async function setUnread(message, unread) {
 async function open(message) {
   if (busy.value) return
   selectedId.value = message.id
+  if (readOnly.value) return
   if (!isEmailMessage(message)) {
     if (message.unread) await run(() => setUnread(message, false))
     return
@@ -390,7 +393,7 @@ async function saveToDrive() {
     driveError.value = err.message + (dialog.saved.length ? ` Zapisano już: ${dialog.saved.length}. Ponów zapis pozostałych załączników.` : '')
   } finally { driveSaving.value = false }
 }
-onMounted(async () => { await run(async () => { try { await scanSpam() } catch (err) { await load(); throw err } }); if (props.initialMessageId) await showRequestedMessage(props.initialMessageId) })
+onMounted(async () => { await run(async () => { if (readOnly.value) { await load(); return }; try { await scanSpam() } catch (err) { await load(); throw err } }); if (props.initialMessageId) await showRequestedMessage(props.initialMessageId) })
 </script>
 
 <template>

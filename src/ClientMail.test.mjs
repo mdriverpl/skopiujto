@@ -625,3 +625,20 @@ test('opening a removed report message shows an error and consumes the navigatio
   assert.match(state.error.value, /nie jest już dostępna/)
   assert.deepEqual(events.at(-1), ['message-opened'])
 })
+
+
+test('read-only admin preview loads and opens mail without scanning or changing unread state', async () => {
+  const calls = []
+  const state = panel(async (path, method) => {
+    calls.push({ path, method })
+    if (path.startsWith('/client-mail?')) return [{ ...message }]
+    if (path === '/client-mail/settings') return { account: { imap: { enabled: false } } }
+    return []
+  }, { currentUser: { id: 'archived', impersonation: { read_only: true } } })
+  await state.mount()
+  await state.open(state.messages.value[0])
+  await state.refresh()
+  assert.equal(state.selectedId.value, message.id)
+  assert.equal(state.messages.value[0].unread, 1)
+  assert.equal(calls.some(call => call.method), false)
+})

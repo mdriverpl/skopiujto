@@ -25,7 +25,7 @@ def register_fonts():
                 pdfmetrics.registerFont(TTFont('Document' + suffix, str(directory / filename)))
             pdfmetrics.registerFontFamily('Document', normal='Document', bold='Document-Bold', italic='Document-Italic', boldItalic='Document-BoldItalic')
             return
-    raise RuntimeError('Brak czcionki PDF. Zainstaluj fonts-dejavu-core.')
+    raise RuntimeError('Brak czcionki PDF. Zainstaluj fonts-dejavu-core i fonts-dejavu-extra.')
 
 
 def inline(node):

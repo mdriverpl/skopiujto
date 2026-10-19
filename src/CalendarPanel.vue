@@ -9,6 +9,20 @@ const [initialYear, initialMonth] = today.split('-').map(Number)
 const year = ref(initialYear), month = ref(initialMonth - 1), selected = ref(today)
 const data = ref({ mine: [], sent: [], waiting: 0 }), loading = ref(true), refreshing = ref(false), error = ref(''), showFinished = ref(false)
 const pending = item => ['todo', 'in_progress', 'waiting', 'sending'].includes(item.status)
+const view = ref('calendar')
+try {
+  const saved = localStorage.getItem('edokumenty-calendar-view')
+  if (['calendar', 'list'].includes(saved)) view.value = saved
+} catch {}
+function changeView(value) {
+  if (!['calendar', 'list'].includes(value)) return
+  view.value = value
+  try { localStorage.setItem('edokumenty-calendar-view', value) } catch {}
+}
+const deadline = item => item.due_at && dateKey(item.due_at) ? new Date(item.due_at).getTime() : Infinity
+const todoTasks = computed(() => data.value.mine.filter(pending).slice().sort((a, b) => deadline(a) - deadline(b)))
+const fullDate = value => new Intl.DateTimeFormat('pl-PL', { timeZone: 'Europe/Warsaw', dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+
 const tasks = computed(() => data.value.mine.filter(item => showFinished.value || pending(item)))
 const undated = computed(() => tasks.value.filter(item => !item.due_at || !dateKey(item.due_at)))
 const byDay = computed(() => {
@@ -63,9 +77,10 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
 </script>
 <template>
 <section class="calendar-panel">
-  <header class="calendar-heading page-menu"><Teleport to="#workspace-title"><div><h1><CalendarDays :size="25" /> Terminarz</h1><p>Twoje zadania i terminy w jednym kalendarzu.</p></div></Teleport><div class="calendar-actions"><button :disabled="refreshing" aria-label="Odśwież terminarz" @click="load()"><RefreshCw :size="16" /></button><button class="primary" @click="emit('new-task')"><Plus :size="16" /> Nowe zadanie</button></div></header>
+  <header class="calendar-heading page-menu"><Teleport to="#workspace-title"><div><h1><CalendarDays :size="25" /> Terminarz</h1><p>Twoje zadania i terminy w jednym miejscu.</p></div></Teleport><div class="calendar-actions"><div class="layout-switch" role="group" aria-label="Widok terminarza"><button :aria-pressed="view === 'calendar'" @click="changeView('calendar')"><CalendarDays :size="17" /> Kalendarz</button><button :aria-pressed="view === 'list'" @click="changeView('list')"><ListTodo :size="17" /> Lista zadań do wykonania</button></div><button :disabled="refreshing" aria-label="Odśwież terminarz" @click="load()"><RefreshCw :size="16" /></button><button class="primary" @click="emit('new-task')"><Plus :size="16" /> Nowe zadanie</button></div></header>
   <p v-if="error" class="error" role="alert">{{ error }}</p>
   <p v-if="loading" class="muted" role="status">Wczytywanie terminarza…</p>
+  <template v-if="view === 'calendar'">
   <div class="calendar-layout">
     <section class="panel month-panel" aria-label="Kalendarz zadań">
       <header class="month-toolbar"><h2 aria-live="polite">{{ monthTitle }}</h2><div><button aria-label="Poprzedni miesiąc" @click="moveMonth(-1)"><ChevronLeft :size="17" /></button><button @click="choose(today)">Dzisiaj</button><button aria-label="Następny miesiąc" @click="moveMonth(1)"><ChevronRight :size="17" /></button></div></header>
@@ -77,6 +92,12 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
     <aside class="panel day-panel"><header><span>WYBRANY DZIEŃ</span><h2>{{ selectedTitle }}</h2><small>{{ selectedTasks.length }} zadań</small></header><p v-if="!selectedTasks.length" class="calendar-empty">Na ten dzień nie masz zaplanowanych zadań.</p><article v-for="item in selectedTasks" :key="keyOf(item)" class="agenda-task"><span class="agenda-time" :class="{ overdue: overdue(item) }"><Clock3 :size="13" /> {{ time(item.due_at) }}<template v-if="overdue(item)"> · po terminie</template></span><h3>{{ item.title }}</h3><p v-if="item.description">{{ item.description }}</p><small>{{ labels[item.status] || item.status }}</small><button @click="openResource(item)">Otwórz <ArrowUpRight :size="14" /></button></article><button class="all-tasks" @click="emit('open-tasks')"><ListTodo :size="16" /> Wszystkie moje zadania</button></aside>
   </div>
   <section class="panel undated-panel"><header><h2>Bez terminu <span>{{ undated.length }}</span></h2><p>Te zadania też czekają na Ciebie.</p></header><p v-if="!undated.length" class="calendar-empty">Brak zadań bez terminu.</p><button v-for="item in undated" :key="keyOf(item)" class="undated-task" @click="openResource(item)"><ListTodo :size="17" /><span><strong>{{ item.title }}</strong><small>{{ labels[item.status] || item.status }}</small></span><ArrowUpRight :size="15" /></button></section>
+  </template>
+  <section v-else class="calendar-todo" aria-label="Lista zadań do wykonania">
+    <header class="todo-heading"><div><h2>Do wykonania <span>{{ todoTasks.length }}</span></h2><p>Wszystkie oczekujące zadania, od najbliższego terminu. Zadania bez terminu znajdziesz na końcu.</p></div></header>
+    <div v-if="!loading && !todoTasks.length" class="panel todo-empty"><ListTodo :size="32" :stroke-width="1.5" /><h3>Wszystko na bieżąco</h3><p>Nie masz zadań do wykonania.</p></div>
+    <article v-for="item in todoTasks" :key="keyOf(item)" class="panel todo-row"><span class="todo-icon" aria-hidden="true"><ListTodo :size="23" :stroke-width="1.5" /></span><div class="todo-details"><h3><button @click="openResource(item)">{{ item.title }}</button></h3><p v-if="item.description">{{ item.description }}</p><small v-if="item.folder_name">Katalog: {{ item.folder_name }}</small><small v-else-if="item.document_title || item.filename">{{ item.filename || item.document_title }}</small></div><div class="todo-deadline" :class="{ overdue: overdue(item) }"><span><Clock3 :size="13" /> {{ deadline(item) !== Infinity ? fullDate(item.due_at) : 'Bez terminu' }}</span><small v-if="overdue(item)">Po terminie</small></div><span class="todo-status" :class="item.status">{{ labels[item.status] || item.status }}</span><button class="todo-open" :aria-label="`Otwórz zadanie: ${item.title}`" @click="openResource(item)">Otwórz <ArrowUpRight :size="15" /></button></article>
+  </section>
 </section>
 </template>
 <style scoped>
@@ -92,4 +113,31 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
 .undated-panel { margin-top:18px; padding:20px; border-radius:18px; }.undated-panel h2 { margin:0; font-size:16px; }.undated-panel h2 span { color:var(--accent); font-size:12px; margin-left:5px; }.undated-panel header p { font-size:11px; color:var(--muted); }.undated-task { display:flex; width:100%; text-align:left; gap:12px; justify-content:flex-start; background:transparent; border:0; border-top:1px solid var(--border); border-radius:0; padding:14px 0; }.undated-task > span { flex:1; min-width:0; overflow-wrap:anywhere; }.undated-task strong { font-size:12px; font-weight:500; }.undated-task small { display:block; color:var(--muted); font-size:10px; margin-top:5px; }.undated-task > svg { color:var(--accent); flex-shrink:0; }
 @media(max-width:1000px) { .calendar-layout { grid-template-columns:1fr; } }
 @media(max-width:580px) { .month-panel { padding:14px 10px; }.month-toolbar h2 { font-size:16px; }.calendar-day { min-height:55px; padding:5px; gap:2px; align-items:center; }.day-task,.more-tasks { display:none; }.mobile-count { display:block; background:var(--accent-soft); color:var(--accent); border-radius:4px; font-size:9px; padding:2px 5px; }.day-panel { padding:18px; } }
+.calendar-actions { flex-wrap:wrap; }
+.calendar-actions .layout-switch button { font-size:12px; gap:6px; }
+.todo-heading { margin:0 0 18px; }
+.todo-heading h2 { font-size:18px; margin:0 0 8px; }
+.todo-heading h2 span { font-size:11px; color:var(--accent); background:var(--accent-soft); padding:4px 7px; border-radius:6px; margin-left:5px; }
+.todo-heading p { font-size:12px; color:var(--muted); line-height:1.6; margin:0; }
+.calendar-todo { display:grid; gap:12px; }
+.todo-row { display:grid; grid-template-columns:42px minmax(0,1fr) 155px 100px auto; gap:16px; align-items:center; padding:16px; border-radius:12px; }
+.todo-icon { display:flex; padding:10px; color:var(--accent); background:var(--accent-soft); border-radius:11px; }
+.todo-details { min-width:0; overflow-wrap:anywhere; }
+.todo-details h3 { margin:0; font-size:13px; font-weight:500; }
+.todo-details h3 button { border:0; padding:0; background:transparent; text-align:left; font:inherit; overflow-wrap:anywhere; }
+.todo-details h3 button:hover { color:var(--accent); }
+.todo-details p { margin:6px 0; color:var(--secondary); font-size:11px; line-height:1.6; white-space:pre-wrap; display:-webkit-box; -webkit-line-clamp:2; line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.todo-details small { color:var(--muted); font-size:10px; }
+.todo-deadline { display:grid; gap:6px; color:var(--secondary); font-size:11px; }
+.todo-deadline > span { display:flex; align-items:center; gap:5px; }
+.todo-deadline.overdue { color:var(--danger); }
+.todo-deadline small { font-size:10px; }
+.todo-status { font-size:10px; padding:5px 8px; border-radius:6px; color:var(--warning); background:var(--warning-soft); justify-self:start; }
+.todo-status.in_progress { color:var(--accent); background:var(--accent-soft); }
+.todo-open { font-size:11px; padding:7px 9px; }
+.todo-empty { text-align:center; padding:36px 20px; color:var(--accent); }
+.todo-empty h3 { font-size:15px; color:var(--text); }
+.todo-empty p { font-size:12px; color:var(--muted); }
+@media(max-width:1000px) { .todo-row { grid-template-columns:42px minmax(0,1fr) auto; }.todo-deadline { grid-column:2; }.todo-status { grid-column:3; grid-row:1; }.todo-open { grid-column:3; grid-row:2; } }
+@media(max-width:480px) { .calendar-actions { width:100%; }.calendar-actions .layout-switch { max-width:100%; }.calendar-actions .layout-switch button { font-size:11px; padding:7px; }.todo-row { gap:10px; padding:12px; grid-template-columns:34px minmax(0,1fr) auto; }.todo-icon { padding:7px; }.todo-details h3 { font-size:12px; }.todo-deadline { grid-column:1 / 3; font-size:10px; } }
 </style>

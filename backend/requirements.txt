@@ -14,3 +14,5 @@ cryptography>=44,<50
 tzdata>=2025.2
 reportlab>=4.4,<5
 pypdf>=6,<7
+
+pywebpush>=2,<3

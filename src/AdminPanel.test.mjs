@@ -15,7 +15,7 @@ function panel(superadmin = false, confirm = () => true, failure = false) {
     if (path === '/me/company') return { id: 'one', name: 'Firma' }
     if (path === '/admin/companies') return [{ id: 'one' }, { id: 'two' }]
     if (path === '/admin/groups' && !method) return [{ id: 'group', company_id: 'one', members: [], permissions: [] }]
-    if (path === '/admin/users' && !method) return [{ id: 'a', company_id: 'one' }, { id: 'b', company_id: 'two' }]
+    if (path.startsWith('/admin/users') && !method) return [{ id: 'a', company_id: 'one' }, { id: 'b', company_id: 'two' }]
     return []
   }
   const context = { computed, ref, watch, onMounted() {}, window: { confirm } }
@@ -58,8 +58,8 @@ test('confirmed deletion refreshes users and reports success', async () => {
   await state.deleteAccount({ id: 'a', name: 'Alice' })
   assert.equal(calls[0].path, '/admin/users/a')
   assert.equal(calls[0].method, 'DELETE')
-  assert.ok(calls.some(call => call.path === '/admin/users' && !call.method))
-  assert.equal(state.notice.value, 'Usunięto konto użytkownika.')
+  assert.ok(calls.some(call => call.path === '/admin/users?include_deleted=true' && !call.method))
+  assert.match(state.notice.value, /Dokumenty i historia zostały zachowane/)
 })
 test('blocked deletion displays error and keeps user list', async () => {
   const { state, calls } = panel(true, () => true, true)
@@ -71,4 +71,16 @@ test('blocked deletion displays error and keeps user list', async () => {
   assert.equal(state.error.value, 'Konto ma powiązane dane.')
   assert.equal(state.notice.value, '')
   assert.equal(calls.length, 1)
+})
+
+
+test('archived accounts stay separate from active users and remain available for admin preview', async () => {
+  const { state, calls } = panel()
+  state.accounts.value = [{ id: 'active', company_id: 'one' }, { id: 'archived', company_id: 'one', active: false, deleted_at: '2026-10-19' }]
+  assert.equal(state.activeAccounts.value.length, 1)
+  assert.equal(state.visibleAccounts.value[0].id, 'active')
+  state.showDeleted.value = true
+  assert.equal(state.visibleAccounts.value[0].id, 'archived')
+  await state.enterAccount(state.visibleAccounts.value[0])
+  assert.ok(calls.some(call => call.path === '/admin/users/archived/impersonate' && call.method === 'POST'))
 })
