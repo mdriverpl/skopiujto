@@ -49,9 +49,10 @@ def test_image_status_does_not_replace_or_enable_generic_edits(app_client):
     assert client.get(f"/api/documents/{doc['id']}/file").content == b'original-file'
     assert client.put(f"/api/documents/{doc['id']}", json={'title': 'Changed', 'version': saved['version']}).status_code == 403
 
-def test_hidden_and_shared_files_never_gain_status_permissions(app_client):
+@pytest.mark.parametrize('role', ['user', 'admin'])
+def test_hidden_and_shared_files_never_gain_status_permissions(app_client, role):
     _, client = app_client
-    reader = create_reader(client, role='admin', can_edit=True, can_add=True)
+    reader = create_reader(client, role=role, can_edit=True, can_add=True)
     private = client.post('/api/folders', json={'name': 'Private', 'access_mode': 'private'}).json()
     hidden = uploaded(client, folder_id=private['id'])
     shared = client.post('/api/folders', json={'name': 'Shared', 'access_mode': 'users', 'user_ids': [reader['id']], 'can_edit': True}).json()
@@ -59,11 +60,15 @@ def test_hidden_and_shared_files_never_gain_status_permissions(app_client):
     doc = status(client, doc, 'Do podpisania').json()
     login(client, READER)
     rows = client.get('/api/documents').json()
-    assert hidden['id'] not in [item['id'] for item in rows]
-    assert rows[0]['active_actions'][0]['kind'] == 'signature'
-    assert not rows[0]['permissions']['workflow']
+    by_id = {item['id']: item for item in rows}
+    assert (hidden['id'] in by_id) == (role == 'admin')
+    assert by_id[doc['id']]['active_actions'][0]['kind'] == 'signature'
+    assert not by_id[doc['id']]['permissions']['workflow']
+    if role == 'admin':
+        assert not by_id[hidden['id']]['permissions']['workflow']
+        assert not by_id[hidden['id']]['permissions']['edit']
     assert status(client, doc, 'Gotowy').status_code == 403
-    assert status(client, hidden, 'Gotowy').status_code == 404
+    assert status(client, hidden, 'Gotowy').status_code == (403 if role == 'admin' else 404)
     own = uploaded(client)
     login(client, ADMIN)
     assert client.patch(f"/api/admin/users/{reader['id']}", json={'can_edit': False}).status_code == 200
