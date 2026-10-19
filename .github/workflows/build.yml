@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Pomiń testy frontendu i backendu'
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -27,7 +33,9 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: node --test src/*.test.mjs
+      - name: Frontend tests
+        if: github.event_name != 'workflow_dispatch' || !inputs.skip_tests
+        run: node --test src/*.test.mjs
       - run: npm run build
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -37,6 +45,7 @@ jobs:
           retention-days: 14
 
   backend:
+    if: github.event_name != 'workflow_dispatch' || !inputs.skip_tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -71,6 +80,10 @@ jobs:
 
   docker:
     needs: [frontend, backend]
+    if: >-
+      ${{ !cancelled() && needs.frontend.result == 'success' &&
+          (needs.backend.result == 'success' ||
+           (github.event_name == 'workflow_dispatch' && inputs.skip_tests && needs.backend.result == 'skipped')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
