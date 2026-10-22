@@ -146,7 +146,9 @@ def password_hash(password, salt=None):
 async def security_headers(request: Request, call_next):
     if request.method not in ('GET','HEAD','OPTIONS'):
         origin = request.headers.get('origin')
-        allowed = {str(request.base_url).rstrip('/'), 'http://localhost:5173', 'http://127.0.0.1:5173'}
+        allowed = {str(request.base_url).rstrip('/'),
+                   'http://localhost:5173', 'http://127.0.0.1:5173',
+                   'http://localhost:5174', 'http://127.0.0.1:5174'}
         from urllib.parse import urlsplit
         try:
             public_url = urlsplit(os.getenv('EDOCUMENTS_PUBLIC_URL', ''))

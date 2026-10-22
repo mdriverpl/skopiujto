@@ -9,6 +9,24 @@ from pydantic import ValidationError
 from backend.pricing_offer import OfferConfig, quote_rows, render_offer, router
 
 
+@pytest.mark.parametrize('origin', ['http://127.0.0.1:5174', 'http://localhost:5174'])
+def test_local_pricing_page_can_download_pdf_through_security_middleware(origin):
+    from backend.main import app
+    response = TestClient(app).post('/api/pricing/offer', headers={'Origin': origin}, json={
+        'users': 19, 'storage': 100, 'server_plan': 'S1',
+    })
+    assert response.status_code == 200
+    assert response.content.startswith(b'%PDF-')
+
+
+def test_pricing_pdf_rejects_untrusted_browser_origins():
+    from backend.main import app
+    response = TestClient(app).post('/api/pricing/offer', headers={'Origin': 'https://untrusted.example'}, json={
+        'users': 19, 'storage': 100, 'server_plan': 'S1',
+    })
+    assert response.status_code == 403
+
+
 def test_vpn_is_optional_costs_19_and_full_configuration_stays_on_one_page():
     config = OfferConfig(users=19, storage=100, server_plan='S1', server_ha=True,
                          database_plan='S1', database_ha=True, waf=True, backup=True, logs=True, vpn=True)
