@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from backend import storage, access, admin, images, mailing, workflow, richtext, ai, document_fields, ai_files, saved_data, tasks, dictionaries, dictionary_excel, ai_commands, surveys, audit
 from backend import database, api_tokens, assistant, notes, flows, client_mail, mail_settings, mail_daily, edelivery, edelivery_connection, companies, impersonation
 from backend import message_center, webpush
+from backend.pricing_offer import router as pricing_router
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / '.env')
@@ -28,6 +29,7 @@ app = FastAPI(title='Space & Flow — eDokumenty REST API', version='1.1.0',
     description='API dokumentów, folderów, historii, zadań i ankiet. Logowanie przeglądarki używa cookie session. Integracje używają nagłówka Authorization: Bearer <klucz API>.',
     docs_url='/api/docs', redoc_url='/api/redoc', openapi_url='/api/openapi.json')
 bearer_auth = HTTPBearer(auto_error=False, scheme_name='ApiKeyBearer')
+app.include_router(pricing_router)
 cookie_auth = APIKeyCookie(name='session', auto_error=False, scheme_name='BrowserSession')
 
 @contextmanager

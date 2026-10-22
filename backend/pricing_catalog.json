@@ -1,0 +1,142 @@
+{
+  "serverPlans": [
+    {
+      "id": "S1",
+      "vcpu": 1,
+      "ram": 1,
+      "nvme": 20,
+      "hourly": 0.0261,
+      "monthly": 19
+    },
+    {
+      "id": "S2",
+      "vcpu": 1,
+      "ram": 2,
+      "nvme": 30,
+      "hourly": 0.0418,
+      "monthly": 30.45
+    },
+    {
+      "id": "S4",
+      "vcpu": 2,
+      "ram": 4,
+      "nvme": 50,
+      "hourly": 0.0705,
+      "monthly": 51.45
+    },
+    {
+      "id": "S8",
+      "vcpu": 4,
+      "ram": 8,
+      "nvme": 80,
+      "hourly": 0.1281,
+      "monthly": 93.45
+    },
+    {
+      "id": "S16",
+      "vcpu": 6,
+      "ram": 16,
+      "nvme": 160,
+      "hourly": 0.2431,
+      "monthly": 177.45
+    },
+    {
+      "id": "S32",
+      "vcpu": 8,
+      "ram": 32,
+      "nvme": 320,
+      "hourly": 0.4589,
+      "monthly": 334.95
+    }
+  ],
+  "databasePlans": [
+    {
+      "id": "S1",
+      "vcpu": 1,
+      "ram": 1,
+      "disk": 20,
+      "single": 41.8,
+      "ha": 83.6
+    },
+    {
+      "id": "S2",
+      "vcpu": 1,
+      "ram": 2,
+      "disk": 30,
+      "single": 66.99,
+      "ha": 133.98
+    },
+    {
+      "id": "S4",
+      "vcpu": 2,
+      "ram": 4,
+      "disk": 50,
+      "single": 113.19,
+      "ha": 226.38
+    },
+    {
+      "id": "S8",
+      "vcpu": 4,
+      "ram": 8,
+      "disk": 80,
+      "single": 205.59,
+      "ha": 411.18
+    },
+    {
+      "id": "S16",
+      "vcpu": 6,
+      "ram": 16,
+      "disk": 160,
+      "single": 390.39,
+      "ha": 780.78
+    },
+    {
+      "id": "S32",
+      "vcpu": 8,
+      "ram": 32,
+      "disk": 320,
+      "single": 736.89,
+      "ha": 1473.78
+    }
+  ],
+  "databaseEngines": [
+    "PostgreSQL",
+    "MySQL",
+    "MariaDB",
+    "Redis"
+  ],
+  "infrastructureOptions": [
+    {
+      "id": "waf",
+      "name": "WAF",
+      "description": "Ochrona domeny przed atakami",
+      "price": 69
+    },
+    {
+      "id": "logs",
+      "name": "Analiza logów",
+      "description": "Osobny serwer analizy logów, wykrywanie zagrożeń i raporty",
+      "price": 99
+    },
+    {
+      "id": "ha",
+      "name": "HA",
+      "description": "Wysoka dostępność — dwa serwery wybranego planu"
+    },
+    {
+      "id": "backup",
+      "name": "Backup S3",
+      "description": "Codzienna kopia bazy i plików",
+      "price": 49
+    },
+    {
+      "id": "vpn",
+      "name": "VPN",
+      "description": "Prywatne połączenie z infrastrukturą",
+      "price": 19
+    }
+  ],
+  "workspaceBase": 500,
+  "userRate": 5,
+  "storageRate": 20
+}

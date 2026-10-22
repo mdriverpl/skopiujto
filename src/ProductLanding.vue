@@ -46,6 +46,7 @@ onBeforeUnmount(() => window.removeEventListener('popstate', restoreFeature))
       <a class="product-brand" href="/" aria-label="Space & Flow — strona główna"><BrandLogo /></a>
       <nav id="product-navigation" aria-label="Menu strony produktu" :class="{ 'is-open': menuOpen }">
         <a href="#wybierz-funkcje" @click="closeMenu">Możliwości</a>
+        <a class="product-pricing-nav" href="/wycena">Wycena</a>
       </nav>
       <a class="product-login-link" href="#logowanie" @click="closeMenu">Zaloguj się <ArrowUpRight :size="16" /></a>
       <button class="product-menu-toggle" :aria-expanded="menuOpen" aria-controls="product-navigation" :aria-label="menuOpen ? 'Zamknij menu produktu' : 'Otwórz menu produktu'" @click="menuOpen = !menuOpen"><X v-if="menuOpen" :size="22" /><Menu v-else :size="22" /></button>
@@ -59,7 +60,7 @@ onBeforeUnmount(() => window.removeEventListener('popstate', restoreFeature))
         <p>{{ selectedPage.description }}</p>
         <ul v-if="selectedPage.benefits" class="hero-feature-benefits"><li v-for="benefit in selectedPage.benefits" :key="benefit"><span v-if="selectedId === 'security'" class="security-benefit-dot"></span><Check v-else :size="15" />{{ benefit }}</li></ul>
         <div v-if="selectedId === 'security'" class="hero-security-context"><p>{{ selectedPage.deploymentNote }}</p><nav aria-label="Źródła informacji o NIS2"><a href="https://eli.gov.pl/eli/DU/2026/252/ogl" target="_blank" rel="noopener noreferrer">Ustawa KSC ↗</a><a href="https://www.gov.pl/web/cyfryzacja/nowelizacja-ustawy-o-krajowym-systemie-cyberbezpieczenstwa-zaczyna-obowiazywac" target="_blank" rel="noopener noreferrer">Wyjaśnienia Ministerstwa Cyfryzacji ↗</a></nav></div>
-        <div class="product-hero-actions"><a class="product-button" href="#logowanie">{{ selectedId === 'home' ? 'Wejdź do swojej przestrzeni' : 'Zaloguj się i zacznij' }}<ArrowRight :size="18" /></a><a class="product-text-link" href="#wybierz-funkcje">Poznaj możliwości <ArrowUpRight :size="17" /></a></div>
+        <div class="product-hero-actions"><a class="product-button" href="#logowanie">{{ selectedId === 'home' ? 'Wejdź do swojej przestrzeni' : 'Zaloguj się i zacznij' }}<ArrowRight :size="18" /></a><a class="product-pricing-hero" href="/wycena">Wyceń swoją przestrzeń <ArrowUpRight :size="17" /></a><a class="product-text-link" href="#wybierz-funkcje">Poznaj możliwości <ArrowUpRight :size="17" /></a></div>
         <div v-if="selectedId === 'home'" class="product-hero-note"><span><Check :size="14" /> Prosto. Razem. W dobrym flow.</span><span><Check :size="14" /> Na komputerze i telefonie</span></div>
       </div>
       <div :key="'animation-' + selectedId" class="product-motion product-motion-shelves" :class="{ 'motion-paused': paused, 'feature-light-demo': ['ai','calendar','process','security','surveys','alert'].includes(selectedPage.mode) }">
@@ -183,4 +184,6 @@ onBeforeUnmount(() => window.removeEventListener('popstate', restoreFeature))
 
 
 .product-login-only{max-width:520px}
+.product-pricing-nav{border:0;background:transparent;padding:10px 0;border-radius:0;font-size:12px;color:#656471}.product-pricing-nav:hover{background:transparent;color:#6a56d7}.product-pricing-hero{display:inline-flex;align-items:center;gap:12px;background:#fff;border:1px solid #dcc9ef;border-radius:12px;color:#7844ad;font-size:12px;font-weight:600;padding:12px 18px}.product-pricing-hero:hover{background:#f2eaff}.product-header nav{align-items:center}
+@media(max-width:760px){.product-header nav{align-items:flex-start}.product-pricing-nav{padding:12px 0;font-size:13px}}
 </style>

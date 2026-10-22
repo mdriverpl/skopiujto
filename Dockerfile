@@ -4,6 +4,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY index.html vite.config.js ./
 COPY src ./src
+COPY backend/pricing_catalog.json ./backend/pricing_catalog.json
 COPY public ./public
 RUN npm run build
 
