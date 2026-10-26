@@ -67,6 +67,11 @@ Link do katalogu pokazuje aktualne własne zasoby nadawcy w tym katalogu
 i podkatalogach. Nie obejmuje plików innych autorów. Publiczny widok obsługuje
 pobieranie plików, ZIP katalogu, miniatury zdjęć i podgląd PDF lub dokumentu.
 Ważność linku i aktualne uprawnienia właściciela są sprawdzane przy każdym odczycie.
+Galeria zdjęć ma małe, średnie i duże miniatury oraz widok listy. Kliknięcie
+zdjęcia otwiera duży podgląd ze strzałkami poprzednie/następne, licznikiem i paskiem
+miniaturek. Działają strzałki klawiatury, Escape oraz przesuwanie palcem na telefonie.
+Podgląd obsługuje powiększanie, przesuwanie powiększonego obrazu, pełny ekran,
+pokaz slajdów i pobieranie zdjęcia.
 
 Pozycja **Pomoc** w menu otwiera wyszukiwane instrukcje modułów. Ikona książki
 w nagłówku otwiera pomoc dotyczącą bieżącego modułu.
