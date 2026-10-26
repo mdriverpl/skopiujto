@@ -104,8 +104,8 @@ def render_offer(config):
                     ParagraphStyle('date', parent=styles['detail'], alignment=2))]], colWidths=[width * .55, width * .45])
     header.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0),
                                 ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
-    story = [header, Spacer(1, 28), p('Twoja przestrzeń.<br/>Twoje dobre flow.', 'title'), Spacer(1, 12),
-             p('Oferta konfiguracji SpaceFlow Workspace'), Spacer(1, 24)]
+    story = [header, Spacer(1, 20), p('Twoja przestrzeń.<br/>Twoje dobre flow.', 'title'), Spacer(1, 10),
+             p('Oferta konfiguracji SpaceFlow Workspace'), Spacer(1, 18)]
     rows = quote_rows(config)
     total = sum(row[2] for row in rows)
     data = [[p('KONFIGURACJA', 'tablehead'), p('NETTO / MIESIĄC', 'tablehead')]]
@@ -115,7 +115,7 @@ def render_offer(config):
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), pale), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('LEFTPADDING', (0, 0), (-1, -1), 12), ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-        ('TOPPADDING', (0, 0), (-1, -1), 8), ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
         ('LINEBELOW', (0, 0), (-1, -1), .5, line),
     ]))
     story.append(table)
