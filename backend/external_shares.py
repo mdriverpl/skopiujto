@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
-from fastapi import Depends, HTTPException, Query, Response
+from fastapi import Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
@@ -162,12 +162,19 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
         return link, root, folders, files, owner
 
     @app.get('/api/public-shares/{token}')
-    def public_view(token: str, folder_id: str | None = Query(None, max_length=64)):
+    def public_view(token: str, request: Request, response: Response, folder_id: str | None = Query(None, max_length=64)):
         with db() as con:
             link, root, folders, files, owner = resolve(con, token)
+            identity = gallery_interactions.visitor(request, response)
+            liked = {row['document_id'] for row in con.execute(
+                'SELECT document_id FROM photo_likes WHERE link_id=? AND visitor_hash=?', (link['id'], identity))}
+            def viewer_info(row):
+                item = info(row, con, link)
+                if item['image']: item['liked'] = row['id'] in liked
+                return item
             result = {'view_mode': link['view_mode'], 'expires': link['expires']}
             if not link['folder_id']:
-                item = info(root, con, link)
+                item = viewer_info(root)
                 return result | {'kind': 'document', 'title': item['title'], 'document': item}
             selected = folder_id or root['id']
             if selected not in folders: raise HTTPException(404, 'Katalog nie jest objęty tym linkiem.')
@@ -181,7 +188,7 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
                 'allow_uploads': bool(link['allow_uploads']), 'link_id': link['id'],
                 'can_add_photos': access.permissions(con, owner, selected, root['user_id'])['add'],
                 'folders': [{'id': row['id'], 'name': row['name']} for row in folders.values() if row['parent_id'] == selected],
-                'files': [info(row, con, link) for row in files.values() if row['folder_id'] == selected]}
+                'files': [viewer_info(row) for row in files.values() if row['folder_id'] == selected]}
 
     def public_document(con, token, document_id):
         link, _, _, _, owner = resolve(con, token, with_scope=False)

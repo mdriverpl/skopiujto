@@ -92,8 +92,8 @@ ma dostęp do pozostałej zawartości tego samego udostępnienia. Obsługiwane j
 systemowe udostępnianie, jeśli przeglądarka je udostępnia.
 Właściciel katalogu może użyć **Dodaj zdjęcia** bezpośrednio w galerii.
 Opcja **Zezwalaj odbiorcom linku na dodawanie zdjęć** udostępnia ten formularz także
-osobom bez konta. Opcję można włączyć przy tworzeniu linku, przy istniejącym linku
-lub w galerii po zalogowaniu jako właściciel. Domyślnie jest wyłączona.
+osobom bez konta. Opcję można włączyć w oknie udostępniania przy tworzeniu linku
+lub przy istniejącym linku. Domyślnie jest wyłączona.
 Formularz przyjmuje wiele zdjęć i przeciąganie plików, pokazuje wynik każdego zapisu
 i ponawia wyłącznie nieudane przesyłania. Obsługuje JPG, PNG, WebP, GIF, BMP, AVIF i ICO,
 do 10 MB i 40 milionów pikseli na zdjęcie. Serwer sprawdza faktyczny format obrazu.
@@ -101,6 +101,12 @@ Odbiorcy mogą dodać do 20 zdjęć na godzinę w jednej przeglądarce oraz łą
 zdjęć na dobę na link. Pliki trafiają na konto właściciela katalogu; historia oznacza
 je jako dodane przez odbiorcę linku. Wyłączenie dodawania blokuje kolejne przesyłania,
 zachowując już dodane zdjęcia. Wygaśnięcie lub wyłączenie linku blokuje też zapis.
+
+Przyciski **Dodaj zdjęcia**, **Pobierz** i **Udostępnij** znajdują się w pasku
+galerii przed przełącznikami siatki i listy. Serduszka przy zdjęciach w siatce,
+liście i kafelkach są klikalne. Polubienie wypełnia serce na czerwono; kolejne
+kliknięcie je cofa. Stan jest wspólny z dużym podglądem i zostaje po odświeżeniu
+w tej samej przeglądarce, dla tego samego linku.
 
 Pozycja **Pomoc** w menu otwiera wyszukiwane instrukcje modułów. Ikona książki
 w nagłówku otwiera pomoc dotyczącą bieżącego modułu.

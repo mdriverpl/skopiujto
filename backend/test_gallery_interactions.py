@@ -60,15 +60,32 @@ def test_likes_idempotent_per_visitor_and_scoped_to_link(app_client):
         assert response.status_code == 200, response.text
         assert response.json()['likes_count'] == 1
     assert client.get(url).json()['files'][0]['likes_count'] == 1
+    assert client.get(url).json()['files'][0]['liked'] is True
     assert client.get(other + '/activity').json()['likes_count'] == 0
     identity = client.cookies.get('gallery_visitor')
     client.cookies.clear()
+    assert client.get(url).json()['files'][0]['liked'] is False
     assert not client.get(photo + '/activity').json()['liked']
     assert client.put(photo + '/like', json={'liked': True}).json()['likes_count'] == 2
     client.cookies.clear()
     client.cookies.set('gallery_visitor', identity)
     assert client.put(photo + '/like', json={'liked': False}).json()['likes_count'] == 1
     assert not client.get(photo + '/activity').json()['liked']
+
+
+def test_grid_initializes_visitor_so_a_first_click_needs_no_activity_request(app_client):
+    _, client = app_client
+    _, row, _, url, photo = setup_photo(client)
+    _, single = create_link(client, 'document', row, 'gallery')
+    client.post('/api/logout')
+    first = client.get(url)
+    assert 'HttpOnly' in first.headers['set-cookie']
+    assert first.json()['files'][0]['liked'] is False
+    assert client.put(photo + '/like', json={'liked': True}).json()['likes_count'] == 1
+    assert client.get(url).json()['files'][0]['liked'] is True
+    assert client.get(single).json()['document']['liked'] is False
+    assert client.put(photo + '/like', json={'liked': False}).json()['likes_count'] == 0
+    assert client.get(url).json()['files'][0]['liked'] is False
 
 
 def test_comments_validation_ownership_moderation_and_rate_limit(app_client):

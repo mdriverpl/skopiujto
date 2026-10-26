@@ -12,7 +12,7 @@ function page(api, search = '') {
   const context = { computed, nextTick, ref, URL, URLSearchParams, location: { origin: 'https://example.com', search },
     onMounted: callback => { mount = callback } }
   for (const name of ['Folder', 'FileText', 'Download', 'ChevronRight', 'ArrowLeft', 'Link', 'Images', 'LayoutGrid',
-    'AlertCircle', 'Share2', 'ImagePlus', 'RichTextEditor', 'PhotoGallery', 'PhotoUpload', 'ShareLink']) context[name] = {}
+    'AlertCircle', 'Share2', 'ImagePlus', 'RichTextEditor', 'PhotoGallery', 'PhotoUpload', 'ShareLink', 'PhotoLike']) context[name] = {}
   runInNewContext(source, context)
   const state = context.component.setup({ api, token: 'gallery-token' }, { expose() {} })
   return { state, mount: () => mount() }
@@ -39,17 +39,11 @@ test('a photo outside the current folder cannot be opened by changing the URL', 
   state.resource.value.can_add_photos = false; assert.equal(state.canUploadPhotos.value, false)
 })
 
-test('owner upload controls work while guest uploads are disabled and failed settings restore the checkbox', async () => {
-  let fail = false
-  const { state, mount } = page(async (path, method, body) => {
-    if (method) { if (fail) throw new Error('Denied'); return { allow_uploads: body.allow_uploads } }
+test('owner upload controls work while guest uploads are disabled and newly uploaded photos are not duplicated', async () => {
+  const { state, mount } = page(async path => {
     return path.endsWith('/permissions') ? { can_edit: true } : { ...root, files: [] }
   })
   await mount(); assert.equal(state.canUploadPhotos.value, true)
-  const event = { target: { checked: true } }; await state.changeUploads(event)
-  assert.equal(state.resource.value.allow_uploads, true)
-  fail = true; event.target.checked = false; await state.changeUploads(event)
-  assert.equal(event.target.checked, true); assert.equal(state.actionError.value, 'Denied')
   state.uploaded({ id: 'added', image: true }); state.uploaded({ id: 'added', image: true })
   assert.equal(state.resource.value.files.length, 1)
 })
