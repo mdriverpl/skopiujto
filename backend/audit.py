@@ -17,7 +17,8 @@ LABELS = {'title': 'Nazwa', 'name': 'Nazwa', 'category': 'Kategoria', 'content':
           'status': 'Status', 'description': 'Opis', 'filename': 'Nazwa pliku', 'file_size': 'Rozmiar pliku (B)',
           'access_mode': 'Dostęp', 'permissions': 'Uprawnienia', 'crop': 'Kadr i rozdzielczość',
           'comment': 'Komentarz', 'deadline': 'Termin', 'done': 'Wykonanie terminu', 'expires': 'Ważność linku',
-          'document_id': 'Identyfikator dokumentu', 'folder_id': 'Katalog', 'view_mode': 'Widok udostępnienia'}
+          'document_id': 'Identyfikator dokumentu', 'folder_id': 'Katalog', 'view_mode': 'Widok udostępnienia',
+          'allow_uploads': 'Dodawanie zdjęć przez odbiorców linku'}
 
 def change(field, before, after):
     def display(value):

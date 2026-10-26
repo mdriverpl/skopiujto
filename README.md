@@ -86,6 +86,22 @@ Autor może usunąć swój komentarz, a zalogowany właściciel może moderować
 Podpisy nie są weryfikowaną tożsamością. Komentarz ma limit 1000 znaków,
 a jedna przeglądarka może dodać do danego linku maksymalnie 10 komentarzy na minutę.
 
+Przycisk **Udostępnij** kopiuje adres galerii, a przycisk udostępniania w podglądzie
+zdjęcia tworzy adres otwierający od razu wybrany kadr. Odbiorca takiego adresu nadal
+ma dostęp do pozostałej zawartości tego samego udostępnienia. Obsługiwane jest także
+systemowe udostępnianie, jeśli przeglądarka je udostępnia.
+Właściciel katalogu może użyć **Dodaj zdjęcia** bezpośrednio w galerii.
+Opcja **Zezwalaj odbiorcom linku na dodawanie zdjęć** udostępnia ten formularz także
+osobom bez konta. Opcję można włączyć przy tworzeniu linku, przy istniejącym linku
+lub w galerii po zalogowaniu jako właściciel. Domyślnie jest wyłączona.
+Formularz przyjmuje wiele zdjęć i przeciąganie plików, pokazuje wynik każdego zapisu
+i ponawia wyłącznie nieudane przesyłania. Obsługuje JPG, PNG, WebP, GIF, BMP, AVIF i ICO,
+do 10 MB i 40 milionów pikseli na zdjęcie. Serwer sprawdza faktyczny format obrazu.
+Odbiorcy mogą dodać do 20 zdjęć na godzinę w jednej przeglądarce oraz łącznie 100
+zdjęć na dobę na link. Pliki trafiają na konto właściciela katalogu; historia oznacza
+je jako dodane przez odbiorcę linku. Wyłączenie dodawania blokuje kolejne przesyłania,
+zachowując już dodane zdjęcia. Wygaśnięcie lub wyłączenie linku blokuje też zapis.
+
 Pozycja **Pomoc** w menu otwiera wyszukiwane instrukcje modułów. Ikona książki
 w nagłówku otwiera pomoc dotyczącą bieżącego modułu.
 Pomoc obejmuje codzienną pracę, edytor, historię, wysyłanie plików i akceptacje.

@@ -16,7 +16,7 @@ function gallery() {
   const context = { computed, nextTick, reactive, ref, watch, document, setInterval, clearInterval, URLSearchParams,
     onBeforeUnmount: callback => cleanup.push(callback) }
   for (const icon of ['Images', 'Grid3X3', 'List', 'ChevronLeft', 'ChevronRight', 'X', 'Download', 'ZoomIn', 'ZoomOut',
-    'Maximize', 'Minimize', 'Play', 'Pause', 'PanelBottom', 'RotateCcw', 'ImageOff', 'MapPin', 'ExternalLink', 'Heart', 'MessageSquare', 'PhotoActivity']) context[icon] = {}
+    'Maximize', 'Minimize', 'Play', 'Pause', 'PanelBottom', 'RotateCcw', 'ImageOff', 'MapPin', 'ExternalLink', 'Heart', 'MessageSquare', 'Share2', 'PhotoActivity']) context[icon] = {}
   runInNewContext(source, context)
   const props = reactive({ images: images.map(image => ({ ...image })), showGrid: true })
   const state = context.component.setup(props, { expose() {}, emit() {} })

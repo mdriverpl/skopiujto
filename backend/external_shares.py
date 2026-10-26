@@ -10,7 +10,7 @@ from fastapi import Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
-from backend import access, audit, document_pdf, folder_archive, images, gallery_interactions
+from backend import access, audit, document_pdf, folder_archive, images, gallery_interactions, gallery_uploads
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS external_links(
@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS external_links(
 CREATE INDEX IF NOT EXISTS external_link_owner ON external_links(user_id);
 '''
 SCHEMA += gallery_interactions.SCHEMA
+SCHEMA += gallery_uploads.SCHEMA
 
 Mode = Literal['catalog', 'gallery', 'tiles', 'preview']
 
@@ -30,10 +31,12 @@ Mode = Literal['catalog', 'gallery', 'tiles', 'preview']
 class LinkInput(BaseModel):
     view_mode: Mode = 'catalog'
     hours: int = Field(default=168, ge=1, le=2160)
+    allow_uploads: bool = False
 
 
 class LinkView(BaseModel):
-    view_mode: Mode
+    view_mode: Mode | None = None
+    allow_uploads: bool | None = None
 
 
 def can_manage(con, current, row, kind):
@@ -86,7 +89,7 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
     def links(con, kind, identifier, current):
         resource(con, kind, identifier, current)
         field = 'folder_id' if kind == 'folder' else 'document_id'
-        return [dict(row) for row in con.execute(f'''SELECT id,view_mode,expires,revoked,created_at FROM external_links
+        return [dict(row) for row in con.execute(f'''SELECT id,view_mode,expires,revoked,created_at,allow_uploads FROM external_links
             WHERE user_id=? AND {field}=? ORDER BY created_at DESC,id''', (current['id'], identifier))]
 
     @app.get('/api/external-links/{kind}/{identifier}')
@@ -95,6 +98,7 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
 
     @app.post('/api/external-links/{kind}/{identifier}', status_code=201)
     def create(kind: Literal['folder', 'document'], identifier: str, body: LinkInput, current=Depends(user)):
+        if kind == 'document' and body.allow_uploads: raise HTTPException(422, 'Dodawanie zdjęć wymaga linku do katalogu.')
         if kind == 'folder' and body.view_mode == 'preview':
             raise HTTPException(422, 'Dla katalogu wybierz katalog, galerię lub kafelki.')
         token = secrets.token_urlsafe(32)
@@ -103,11 +107,11 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
         with db() as con:
             con.begin_write()
             row = resource(con, kind, identifier, current)
-            con.execute('''INSERT INTO external_links(id,user_id,document_id,folder_id,token_hash,view_mode,expires,created_at)
-                VALUES(?,?,?,?,?,?,?,?)''', (link_id, current['id'], identifier if kind == 'document' else None,
-                identifier if kind == 'folder' else None, hashlib.sha256(token.encode()).hexdigest(), body.view_mode, expires, now()))
+            con.execute('''INSERT INTO external_links(id,user_id,document_id,folder_id,token_hash,view_mode,expires,created_at,allow_uploads)
+                VALUES(?,?,?,?,?,?,?,?,?)''', (link_id, current['id'], identifier if kind == 'document' else None,
+                identifier if kind == 'folder' else None, hashlib.sha256(token.encode()).hexdigest(), body.view_mode, expires, now(), body.allow_uploads))
             audit.record(con, current, kind, row, 'Utworzono zewnętrzny link', [audit.change('view_mode', None, body.view_mode)])
-        return {'id': link_id, 'path': '/public-share/' + token, 'expires': expires, 'view_mode': body.view_mode}
+        return {'id': link_id, 'path': '/public-share/' + token, 'expires': expires, 'view_mode': body.view_mode, 'allow_uploads': body.allow_uploads}
 
     def owned_link(con, link_id, current):
         link = con.execute('SELECT * FROM external_links WHERE id=? AND user_id=?', (link_id, current['id'])).fetchone()
@@ -121,11 +125,17 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
         with db() as con:
             con.begin_write()
             link, kind, row = owned_link(con, link_id, current)
+            if kind == 'document' and body.allow_uploads: raise HTTPException(422, 'Dodawanie zdjęć wymaga linku do katalogu.')
             if kind == 'folder' and body.view_mode == 'preview': raise HTTPException(422, 'Niepoprawny widok katalogu.')
             if link['revoked'] or link['expires'] <= time.time(): raise HTTPException(410, 'Link jest już nieaktywny.')
-            con.execute('UPDATE external_links SET view_mode=? WHERE id=?', (body.view_mode, link_id))
-            audit.record(con, current, kind, row, 'Zmieniono widok linku', [audit.change('view_mode', link['view_mode'], body.view_mode)])
-        return {'view_mode': body.view_mode}
+            mode = body.view_mode or link['view_mode']
+            uploads = int(body.allow_uploads) if body.allow_uploads is not None else link['allow_uploads']
+            con.execute('UPDATE external_links SET view_mode=?,allow_uploads=? WHERE id=?', (mode, uploads, link_id))
+            changes = []
+            if mode != link['view_mode']: changes.append(audit.change('view_mode', link['view_mode'], mode))
+            if uploads != link['allow_uploads']: changes.append(audit.change('allow_uploads', bool(link['allow_uploads']), bool(uploads)))
+            if changes: audit.record(con, current, kind, row, 'Zmieniono ustawienia linku', changes)
+        return {'view_mode': mode, 'allow_uploads': bool(uploads)}
 
     @app.delete('/api/external-links/{link_id}', status_code=204)
     def revoke(link_id: str, current=Depends(user)):
@@ -154,7 +164,7 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
     @app.get('/api/public-shares/{token}')
     def public_view(token: str, folder_id: str | None = Query(None, max_length=64)):
         with db() as con:
-            link, root, folders, files, _ = resolve(con, token)
+            link, root, folders, files, owner = resolve(con, token)
             result = {'view_mode': link['view_mode'], 'expires': link['expires']}
             if not link['folder_id']:
                 item = info(root, con, link)
@@ -168,6 +178,8 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
                 if current == root['id']: break
                 current = item['parent_id']
             return result | {'kind': 'folder', 'title': root['name'], 'folder_id': selected, 'breadcrumbs': breadcrumbs,
+                'allow_uploads': bool(link['allow_uploads']), 'link_id': link['id'],
+                'can_add_photos': access.permissions(con, owner, selected, root['user_id'])['add'],
                 'folders': [{'id': row['id'], 'name': row['name']} for row in folders.values() if row['parent_id'] == selected],
                 'files': [info(row, con, link) for row in files.values() if row['folder_id'] == selected]}
 
@@ -230,6 +242,7 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
 
     gallery_interactions.install(app, db, user, now, public_document, resolve, can_manage,
                                  lambda row: info(row)['image'], info)
+    gallery_uploads.install(app, db, user, now, resolve, can_manage, info)
 
     @app.get('/api/public-shares/{token}/archive')
     def archive(token: str):
