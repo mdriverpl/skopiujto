@@ -16,10 +16,10 @@ function gallery() {
   const context = { computed, nextTick, reactive, ref, watch, document, setInterval, clearInterval, URLSearchParams,
     onBeforeUnmount: callback => cleanup.push(callback) }
   for (const icon of ['Images', 'Grid3X3', 'List', 'ChevronLeft', 'ChevronRight', 'X', 'Download', 'ZoomIn', 'ZoomOut',
-    'Maximize', 'Minimize', 'Play', 'Pause', 'PanelBottom', 'RotateCcw', 'ImageOff', 'MapPin', 'ExternalLink']) context[icon] = {}
+    'Maximize', 'Minimize', 'Play', 'Pause', 'PanelBottom', 'RotateCcw', 'ImageOff', 'MapPin', 'ExternalLink', 'Heart', 'MessageSquare', 'PhotoActivity']) context[icon] = {}
   runInNewContext(source, context)
   const props = reactive({ images: images.map(image => ({ ...image })), showGrid: true })
-  const state = context.component.setup(props, { expose() {} })
+  const state = context.component.setup(props, { expose() {}, emit() {} })
   state.dialog.value = { focus() { focus.push('viewer') } }
   return { state, props, document, focus, unmount: () => cleanup.forEach(callback => callback()) }
 }
@@ -49,6 +49,16 @@ test('zoom resets between images and selecting the current thumbnail does not le
   state.changeZoom(1); state.shift(1)
   assert.equal(state.zoom.value, 1)
   assert.equal(state.pan.value.x, 0)
+  unmount()
+})
+
+test('typing and cursor keys in photo forms do not navigate or zoom the photo', async () => {
+  const { state, unmount } = gallery()
+  await state.open('2')
+  for (const key of ['ArrowLeft', 'ArrowRight', 'Home', 'End', '+', '-', 'Escape']) {
+    state.onKeydown({ key, target: { closest: () => ({}) }, preventDefault() { assert.fail('editing must keep native input keys') } })
+    assert.equal(state.active.value.id, '2'); assert.equal(state.zoom.value, 1)
+  }
   unmount()
 })
 

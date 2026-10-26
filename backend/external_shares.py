@@ -10,7 +10,7 @@ from fastapi import Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
-from backend import access, audit, document_pdf, folder_archive, images
+from backend import access, audit, document_pdf, folder_archive, images, gallery_interactions
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS external_links(
@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS external_links(
  CHECK((document_id IS NULL) != (folder_id IS NULL)));
 CREATE INDEX IF NOT EXISTS external_link_owner ON external_links(user_id);
 '''
+SCHEMA += gallery_interactions.SCHEMA
 
 Mode = Literal['catalog', 'gallery', 'tiles', 'preview']
 
@@ -66,11 +67,12 @@ def scope(con, root, current):
     return folders, files
 
 
-def info(row):
+def info(row, con=None, link=None):
     suffix = Path(row['filename'] or '').suffix.lower()
     image = suffix in {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif', '.ico'}
-    return {key: row[key] for key in ('id', 'title', 'filename', 'file_size', 'version')} | {
+    result = {key: row[key] for key in ('id', 'title', 'filename', 'file_size', 'version')} | {
         'image': image, 'pdf': suffix == '.pdf', 'editor': not row['filename']}
+    return gallery_interactions.decorate(con, row, link, result) if con is not None and image else result
 
 
 def install(app, db, user, now, serialize_document, file_response, image_bytes):
@@ -155,7 +157,8 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
             link, root, folders, files, _ = resolve(con, token)
             result = {'view_mode': link['view_mode'], 'expires': link['expires']}
             if not link['folder_id']:
-                return result | {'kind': 'document', 'title': root['title'], 'document': info(root)}
+                item = info(root, con, link)
+                return result | {'kind': 'document', 'title': item['title'], 'document': item}
             selected = folder_id or root['id']
             if selected not in folders: raise HTTPException(404, 'Katalog nie jest objęty tym linkiem.')
             breadcrumbs, current = [], selected
@@ -166,7 +169,7 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
                 current = item['parent_id']
             return result | {'kind': 'folder', 'title': root['name'], 'folder_id': selected, 'breadcrumbs': breadcrumbs,
                 'folders': [{'id': row['id'], 'name': row['name']} for row in folders.values() if row['parent_id'] == selected],
-                'files': [info(row) for row in files.values() if row['folder_id'] == selected]}
+                'files': [info(row, con, link) for row in files.values() if row['folder_id'] == selected]}
 
     def public_document(con, token, document_id):
         link, _, _, _, owner = resolve(con, token, with_scope=False)
@@ -192,7 +195,7 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
         with db() as con:
             row = public_document(con, token, document_id)
             data = serialize_document(row)
-            return info(row) | {key: data[key] for key in ('content', 'rich_content', 'category')}
+            return info(row, con) | {key: data[key] for key in ('content', 'rich_content', 'category')}
 
     @app.get('/api/public-shares/{token}/documents/{document_id}/file')
     def download(token: str, document_id: str):
@@ -224,6 +227,9 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
             row = public_document(con, token, document_id)
             if row['filename']: return file_response(row, preview=True)
             return Response(document_pdf.render_pdf(serialize_document(row)), media_type='application/pdf')
+
+    gallery_interactions.install(app, db, user, now, public_document, resolve, can_manage,
+                                 lambda row: info(row)['image'], info)
 
     @app.get('/api/public-shares/{token}/archive')
     def archive(token: str):

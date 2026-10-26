@@ -8,7 +8,12 @@ const resource = ref(null), detail = ref(null), loading = ref(true), error = ref
 let request = 0
 const base = computed(() => `/public-shares/${encodeURIComponent(props.token)}`)
 const files = computed(() => resource.value?.files || (resource.value?.document ? [resource.value.document] : []))
-const gallery = ref(null)
+const gallery = ref(null), canEdit = ref(false)
+function updatePhoto(photo) {
+  if (!resource.value) return
+  if (resource.value.files) resource.value.files = resource.value.files.map(item => item.id === photo.id ? { ...item, ...photo } : item)
+  if (resource.value.document?.id === photo.id) { resource.value.document = { ...resource.value.document, ...photo }; resource.value.title = resource.value.document.title }
+}
 const photos = computed(() => files.value.filter(file => file.image).map(file => ({ ...file, src: url(file, 'preview'), download: url(file, 'file') })))
 const otherFiles = computed(() => resource.value?.view_mode === 'gallery' ? files.value.filter(file => !file.image) : files.value)
 const url = (file, action) => `/api${base.value}/documents/${encodeURIComponent(file.id)}/${action}`
@@ -36,17 +41,17 @@ async function openDocument(file, trigger = null) {
   catch (err) { if (current === request) error.value = err.message }
   finally { if (current === request) loading.value = false }
 }
-onMounted(() => load())
+onMounted(() => { load(); props.api(`${base.value}/permissions`).then(result => { canEdit.value = result.can_edit }).catch(() => {}) })
 </script>
 <template>
   <section class="public-share" aria-label="Udostępniony zasób">
-    <header class="public-share-heading"><div><span class="public-eyebrow"><Link :size="15" />Udostępnione przez link</span><h1>{{ resource?.title || 'Udostępniony zasób' }}</h1><p v-if="resource">Dostęp do {{ date(resource.expires) }} · Tylko do odczytu</p></div><a v-if="resource?.kind === 'folder' && !error" class="public-download" :href="`/api${base}/archive`"><Download :size="17" />Pobierz katalog ZIP</a></header>
+    <header class="public-share-heading"><div><span class="public-eyebrow"><Link :size="15" />Udostępnione przez link</span><h1>{{ resource?.title || 'Udostępniony zasób' }}</h1><p v-if="resource">Dostęp do {{ date(resource.expires) }} · Przeglądanie i pobieranie</p></div><a v-if="resource?.kind === 'folder' && !error" class="public-download" :href="`/api${base}/archive`"><Download :size="17" />Pobierz katalog ZIP</a></header>
     <div v-if="error" class="public-error" role="alert"><AlertCircle :size="22" /><div><strong>Nie można otworzyć udostępnienia</strong><p>{{ error }}</p><button @click="load(resource?.folder_id)">Spróbuj ponownie</button></div></div>
     <p v-if="loading" class="public-loading" role="status">Wczytywanie…</p>
     <template v-if="resource && !error && !loading">
       <nav v-if="resource.kind === 'folder' && !detail" class="public-breadcrumbs" aria-label="Ścieżka udostępnionego katalogu"><template v-for="(folder, index) in resource.breadcrumbs" :key="folder.id"><ChevronRight v-if="index" :size="15" /><button :aria-current="folder.id === resource.folder_id ? 'page' : undefined" @click="load(folder.id)">{{ folder.name }}</button></template></nav>
       <div v-if="!detail && resource.folders?.length" class="public-folder-grid"><button v-for="folder in resource.folders || []" :key="folder.id" class="public-folder" @click="load(folder.id)"><Folder :size="30" /><span><strong>{{ folder.name }}</strong><small>Katalog</small></span><ChevronRight :size="18" /></button></div>
-      <PhotoGallery ref="gallery" :images="photos" :load-location="photoLocation" :show-grid="resource.view_mode === 'gallery' && !detail" />
+      <PhotoGallery ref="gallery" :images="photos" :api="api" :token="token" :can-edit="canEdit" @caption-saved="updatePhoto" @activity-updated="updatePhoto" :load-location="photoLocation" :show-grid="resource.view_mode === 'gallery' && !detail" />
       <section v-if="detail" class="public-detail" aria-label="Podgląd pliku"><div class="public-detail-toolbar"><button v-if="resource.view_mode !== 'preview' || resource.kind === 'folder'" @click="detail = null"><ArrowLeft :size="16" />Wróć do katalogu</button><a class="public-download" :href="url(detail, 'file')"><Download :size="16" />{{ detail.editor ? 'Pobierz PDF' : 'Pobierz plik' }}</a></div><h2>{{ detail.title }}</h2>
         <img v-if="detail.image" class="public-image" :src="url(detail, 'preview')" :alt="detail.title" />
         <iframe v-else-if="detail.pdf" class="public-pdf" :src="url(detail, 'preview')" :title="`Podgląd PDF: ${detail.title}`" sandbox></iframe>

@@ -77,6 +77,15 @@ Jeżeli plik ma poprawne współrzędne GPS w EXIF, przy zdjęciu pojawia się p
 do większej mapy. Zdjęcia bez GPS nie pokazują mapy. Odczyt lokalizacji wymaga
 aktywnego linku do tego samego zdjęcia; inne dane EXIF nie są udostępniane przez to API.
 
+Panel **Opis i komentarze** pozwala właścicielowi zdjęcia zmienić nazwę w galerii
+i krótki opis (do 500 znaków). Zmiany nie zastępują oryginalnego pliku ani jego wersji.
+Odbiorcy linku mogą polubić zdjęcie i komentować je pod wybranym podpisem bez logowania.
+Polubienia i komentarze należą do konkretnego linku; osobne linki mają osobne dyskusje.
+Przeglądarka zapamiętuje polubienie i autorstwo komentarza w ciasteczku HttpOnly.
+Autor może usunąć swój komentarz, a zalogowany właściciel może moderować wszystkie.
+Podpisy nie są weryfikowaną tożsamością. Komentarz ma limit 1000 znaków,
+a jedna przeglądarka może dodać do danego linku maksymalnie 10 komentarzy na minutę.
+
 Pozycja **Pomoc** w menu otwiera wyszukiwane instrukcje modułów. Ikona książki
 w nagłówku otwiera pomoc dotyczącą bieżącego modułu.
 Pomoc obejmuje codzienną pracę, edytor, historię, wysyłanie plików i akceptacje.
