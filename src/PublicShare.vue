@@ -30,12 +30,20 @@ function photoMetadata(image) {
 const photoLocation = image => photoMetadata(image).then(result => ({ location: result.location }))
 const size = bytes => bytes == null ? 'Dokument' : bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`
 const date = stamp => new Date(stamp * 1000).toLocaleDateString('pl-PL')
-async function load(folderId = null) {
+async function load(folderId = null, autoEnter = false) {
   const current = ++request
   loading.value = true; error.value = ''; detail.value = null
   try {
-    const result = await props.api(base.value + (folderId ? `?folder_id=${encodeURIComponent(folderId)}` : ''))
+    let result = await props.api(base.value + (folderId ? `?folder_id=${encodeURIComponent(folderId)}` : ''))
     if (current !== request) return
+    const visited = new Set()
+    while (autoEnter && result.kind === 'folder' && !result.files?.length && result.folders?.length === 1 && visited.size < 64) {
+      visited.add(result.folder_id)
+      const childId = result.folders[0].id
+      if (!childId || visited.has(childId)) break
+      result = await props.api(`${base.value}?folder_id=${encodeURIComponent(childId)}`)
+      if (current !== request) return
+    }
     resource.value = result
     loading.value = false
     await nextTick()
@@ -54,7 +62,7 @@ async function openDocument(file, trigger = null) {
 onMounted(async () => {
   props.api(`${base.value}/permissions`).then(result => { canEdit.value = result.can_edit }).catch(() => {})
   const params = new URLSearchParams(location.search)
-  await load(params.get('folder') || null)
+  await load(params.get('folder') || null, !params.has('folder'))
   const photo = params.get('photo')
   if (photo && files.value.some(file => file.id === photo && file.image)) { await nextTick(); gallery.value?.open(photo) }
 })

@@ -20,6 +20,44 @@ function page(api, search = '') {
 const root = { kind: 'folder', title: 'Gallery', folder_id: 'child', files: [{ id: 'one', image: true, title: 'Photo' }],
   view_mode: 'gallery', link_id: 'link', can_add_photos: true, allow_uploads: false }
 
+test('opening a link enters a single nested folder but manual breadcrumb navigation stays at the chosen level', async () => {
+  const calls = []
+  const { state, mount } = page(async path => {
+    calls.push(path)
+    if (path.endsWith('/permissions')) return { can_edit: false }
+    if (path.includes('folder_id=year')) return { ...root, folder_id: 'year', files: [], folders: [{ id: 'album' }] }
+    if (path.includes('folder_id=album')) return { ...root, folder_id: 'album', files: root.files, folders: [] }
+    return { ...root, folder_id: 'root', files: [], folders: [{ id: 'year', name: '2021' }] }
+  })
+  await mount(); assert.equal(state.resource.value.folder_id, 'album')
+  assert.ok(calls.includes('/public-shares/gallery-token?folder_id=year'))
+  assert.ok(calls.includes('/public-shares/gallery-token?folder_id=album'))
+  await state.load('root'); assert.equal(state.resource.value.folder_id, 'root')
+})
+
+test('automatic entry stops at files, multiple choices and cyclic folder responses', async () => {
+  for (const variant of ['files', 'choices', 'cycle']) {
+    const calls = []
+    const { state, mount } = page(async path => {
+      if (path.endsWith('/permissions')) return { can_edit: false }
+      calls.push(path)
+      return { ...root, folder_id: 'root', files: variant === 'files' ? root.files : [],
+        folders: variant === 'choices' ? [{ id: 'a' }, { id: 'b' }] : [{ id: 'root' }] }
+    })
+    await mount(); assert.equal(calls.length, 1); assert.equal(state.resource.value.folder_id, 'root')
+  }
+})
+
+test('an explicitly linked folder is respected even when it contains a single child', async () => {
+  const calls = []
+  const { state, mount } = page(async path => {
+    if (path.endsWith('/permissions')) return { can_edit: false }
+    calls.push(path)
+    return { ...root, folder_id: 'root', files: [], folders: [{ id: 'year', name: '2021' }] }
+  }, '?folder=root')
+  await mount(); assert.equal(calls.length, 1); assert.equal(state.resource.value.folder_id, 'root')
+})
+
 test('GPS and metadata share a single request per file version and failed requests can retry', async () => {
   let calls = 0, fail = true
   const { state } = page(async () => { calls++; if (fail) throw new Error('Offline'); return { width: 12, location: { latitude: 1, longitude: 2 } } })

@@ -67,6 +67,10 @@ Link do katalogu pokazuje aktualne własne zasoby nadawcy w tym katalogu
 i podkatalogach. Nie obejmuje plików innych autorów. Publiczny widok obsługuje
 pobieranie plików, ZIP katalogu, miniatury zdjęć i podgląd PDF lub dokumentu.
 Ważność linku i aktualne uprawnienia właściciela są sprawdzane przy każdym odczycie.
+Po otwarciu linku katalog zawierający wyłącznie jeden podkatalog jest automatycznie
+otwierany, także przez kolejne pojedyncze poziomy. Widok zatrzymuje się przy plikach
+lub wyborze kilku katalogów. Link do konkretnego katalogu oraz ręczna nawigacja
+ścieżką zachowują wybrany poziom.
 Galeria zdjęć ma małe, średnie i duże miniatury oraz widok listy. Kliknięcie
 zdjęcia otwiera duży podgląd ze strzałkami poprzednie/następne, licznikiem i paskiem
 miniaturek. Działają strzałki klawiatury, Escape oraz przesuwanie palcem na telefonie.
