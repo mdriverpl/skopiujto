@@ -13,10 +13,10 @@ function gallery() {
   const trigger = { isConnected: true, focus() { focus.push('trigger') } }
   const document = { activeElement: trigger, body: { style: { overflow: 'auto' } },
     addEventListener() {}, removeEventListener() {}, fullscreenElement: null }
-  const context = { computed, nextTick, reactive, ref, watch, document, setInterval, clearInterval,
+  const context = { computed, nextTick, reactive, ref, watch, document, setInterval, clearInterval, URLSearchParams,
     onBeforeUnmount: callback => cleanup.push(callback) }
   for (const icon of ['Images', 'Grid3X3', 'List', 'ChevronLeft', 'ChevronRight', 'X', 'Download', 'ZoomIn', 'ZoomOut',
-    'Maximize', 'Minimize', 'Play', 'Pause', 'PanelBottom', 'RotateCcw', 'ImageOff']) context[icon] = {}
+    'Maximize', 'Minimize', 'Play', 'Pause', 'PanelBottom', 'RotateCcw', 'ImageOff', 'MapPin', 'ExternalLink']) context[icon] = {}
   runInNewContext(source, context)
   const props = reactive({ images: images.map(image => ({ ...image })), showGrid: true })
   const state = context.component.setup(props, { expose() {} })
@@ -83,5 +83,38 @@ test('Escape and removal of the viewed photo release page scrolling and stop the
   await nextTick()
   assert.equal(state.active.value, null)
   assert.equal(document.body.style.overflow, 'auto')
+  unmount()
+})
+
+test('GPS map appears only for valid image metadata and late responses cannot attach a previous photo location', async () => {
+  const { state, props, unmount } = gallery()
+  let resolveFirst
+  props.loadLocation = image => image.id === '1' ? new Promise(resolve => { resolveFirst = resolve })
+    : Promise.resolve({ location: { latitude: 0, longitude: 0 } })
+  await state.open('1')
+  assert.equal(state.location.value, null)
+  state.select('2')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(state.location.value.latitude, 0)
+  resolveFirst({ location: { latitude: 52.23, longitude: 21.01 } })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(state.location.value.latitude, 0)
+  assert.match(state.mapSource.value, /^https:\/\/www.openstreetmap.org\/export\/embed.html\?/)
+  assert.equal(new URL(state.mapSource.value).searchParams.get('marker'), '0,0')
+  state.close()
+  assert.equal(state.location.value, null)
+  unmount()
+})
+
+test('missing, invalid or unavailable GPS data never invents a map location', async () => {
+  const { state, props, unmount } = gallery()
+  props.loadLocation = image => image.id === '1' ? Promise.resolve({ location: null })
+    : image.id === '2' ? Promise.resolve({ location: { latitude: 95, longitude: 21 } }) : Promise.reject(new Error('Metadata unavailable'))
+  for (const id of ['1', '2', '3']) {
+    await state.open(id)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(state.location.value, null)
+    assert.equal(state.mapSource.value, '')
+  }
   unmount()
 })

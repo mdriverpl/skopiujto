@@ -10,7 +10,7 @@ from fastapi import Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
-from backend import access, audit, document_pdf, folder_archive
+from backend import access, audit, document_pdf, folder_archive, images
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS external_links(
@@ -73,7 +73,7 @@ def info(row):
         'image': image, 'pdf': suffix == '.pdf', 'editor': not row['filename']}
 
 
-def install(app, db, user, now, serialize_document, file_response):
+def install(app, db, user, now, serialize_document, file_response, image_bytes):
     def resource(con, kind, identifier, current):
         table = 'folders' if kind == 'folder' else 'documents'
         row = con.execute(f'SELECT * FROM {table} WHERE id=?', (identifier,)).fetchone()
@@ -201,6 +201,22 @@ def install(app, db, user, now, serialize_document, file_response):
             if row['filename']: return file_response(row)
             return Response(document_pdf.render_pdf(serialize_document(row)), media_type='application/pdf', headers={
                 'Content-Disposition': "attachment; filename*=UTF-8''" + quote(folder_archive.safe_name(row['title']) + '.pdf', safe='')})
+
+    @app.get('/api/public-shares/{token}/documents/{document_id}/location')
+    def photo_location(token: str, document_id: str):
+        with db() as con:
+            row = public_document(con, token, document_id)
+            if not info(row)['image']: return {'location': None}
+        try: location = images.gps_location(image_bytes(row))
+        except HTTPException as exc:
+            if exc.status_code != 415: raise
+            location = None
+        # A revoked link or replaced file must not expose metadata after remote I/O.
+        with db() as con:
+            latest = public_document(con, token, document_id)
+            if latest['version'] != row['version']:
+                raise HTTPException(409, 'Zdjęcie zmieniło się. Otwórz je ponownie.')
+        return {'location': location}
 
     @app.get('/api/public-shares/{token}/documents/{document_id}/preview')
     def preview(token: str, document_id: str):

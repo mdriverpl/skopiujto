@@ -985,7 +985,7 @@ audit.install(app, db, user)
 tasks.install(app, db, user, owned, now)
 mailing.install(app, db, user, owned, file_response, image_bytes, now, digest)
 webpush.install(app, db, user)
-external_shares.install(app, db, user, now, document, file_response)
+external_shares.install(app, db, user, now, document, file_response, image_bytes)
 
 # A built Vue frontend is served by Python from the same origin.
 if (ROOT / 'dist' / 'assets').exists():

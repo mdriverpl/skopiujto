@@ -1,5 +1,6 @@
 """Bounded raster image processing; coordinates follow EXIF display orientation."""
 import io
+import math
 import warnings
 
 from fastapi import HTTPException
@@ -8,6 +9,33 @@ from pydantic import BaseModel, Field
 
 MAX_PIXELS = 40_000_000
 EDIT_FORMATS = {'PNG', 'JPEG', 'WEBP', 'BMP'}
+
+
+def location_from_gps(gps):
+    """Read EXIF GPS DMS coordinates, rejecting incomplete or invalid fixes."""
+    def coordinate(value, reference, allowed, limit):
+        if isinstance(reference, bytes): reference = reference.decode('ascii')
+        if not isinstance(reference, str): raise ValueError()
+        reference = reference.strip('\x00 ').upper()
+        if reference not in allowed or len(value) != 3: raise ValueError()
+        degrees, minutes, seconds = map(float, value)
+        if (not all(math.isfinite(part) for part in (degrees, minutes, seconds)) or
+                not 0 <= degrees <= limit or not 0 <= minutes < 60 or not 0 <= seconds < 60): raise ValueError()
+        result = degrees + minutes / 60 + seconds / 3600
+        if result > limit: raise ValueError()
+        return -result if reference in ('S', 'W') else result
+    try:
+        if not isinstance(gps, dict) or not gps: return None
+        return {'latitude': coordinate(gps[2], gps[1], ('N', 'S'), 90),
+                'longitude': coordinate(gps[4], gps[3], ('E', 'W'), 180)}
+    except (KeyError, TypeError, ValueError, OverflowError, ZeroDivisionError, UnicodeError):
+        return None
+
+
+def gps_location(data):
+    with open_image(data) as image:
+        try: return location_from_gps(image.getexif().get_ifd(34853))
+        except (KeyError, TypeError, ValueError, OSError, SyntaxError): return None
 
 class ImageEdit(BaseModel):
     version: int = Field(strict=True, ge=1)

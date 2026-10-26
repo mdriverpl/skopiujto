@@ -72,6 +72,10 @@ zdjęcia otwiera duży podgląd ze strzałkami poprzednie/następne, licznikiem 
 miniaturek. Działają strzałki klawiatury, Escape oraz przesuwanie palcem na telefonie.
 Podgląd obsługuje powiększanie, przesuwanie powiększonego obrazu, pełny ekran,
 pokaz slajdów i pobieranie zdjęcia.
+Jeżeli plik ma poprawne współrzędne GPS w EXIF, przy zdjęciu pojawia się przycisk
+**Mapa**. Otwiera on mapę OpenStreetMap z miejscem wykonania zdjęcia i odnośnikiem
+do większej mapy. Zdjęcia bez GPS nie pokazują mapy. Odczyt lokalizacji wymaga
+aktywnego linku do tego samego zdjęcia; inne dane EXIF nie są udostępniane przez to API.
 
 Pozycja **Pomoc** w menu otwiera wyszukiwane instrukcje modułów. Ikona książki
 w nagłówku otwiera pomoc dotyczącą bieżącego modułu.
