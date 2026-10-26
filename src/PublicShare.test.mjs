@@ -12,7 +12,7 @@ function page(api, search = '') {
   const context = { computed, nextTick, ref, URL, URLSearchParams, location: { origin: 'https://example.com', search },
     onMounted: callback => { mount = callback } }
   for (const name of ['Folder', 'FileText', 'Download', 'ChevronRight', 'ArrowLeft', 'Link', 'Images', 'LayoutGrid',
-    'AlertCircle', 'Share2', 'ImagePlus', 'RichTextEditor', 'PhotoGallery', 'PhotoUpload', 'ShareLink', 'PhotoLike']) context[name] = {}
+    'AlertCircle', 'ImagePlus', 'RichTextEditor', 'PhotoGallery', 'PhotoUpload', 'PhotoLike']) context[name] = {}
   runInNewContext(source, context)
   const state = context.component.setup({ api, token: 'gallery-token' }, { expose() {} })
   return { state, mount: () => mount() }
@@ -37,9 +37,6 @@ test('deep links load the scoped folder before opening the selected photo', asyn
   state.gallery.value = { open: id => opened.push(id) }; await mount()
   assert.ok(paths.includes('/public-shares/gallery-token?folder_id=child'))
   assert.deepEqual(opened, ['one'])
-  state.shareResource(root.files[0]); const address = new URL(state.shared.value.url)
-  assert.equal(address.searchParams.get('folder'), 'child'); assert.equal(address.searchParams.get('photo'), 'one')
-  state.shareResource(); assert.equal(new URL(state.shared.value.url).searchParams.has('photo'), false)
 })
 
 test('a photo outside the current folder cannot be opened by changing the URL', async () => {

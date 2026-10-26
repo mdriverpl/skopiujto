@@ -1,24 +1,17 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { Folder, FileText, Download, ChevronRight, ArrowLeft, Link, Images, LayoutGrid, AlertCircle, Share2, ImagePlus } from 'lucide-vue-next'
+import { Folder, FileText, Download, ChevronRight, ArrowLeft, Link, Images, LayoutGrid, AlertCircle, ImagePlus } from 'lucide-vue-next'
 import RichTextEditor from './RichTextEditor.vue'
 import PhotoGallery from './PhotoGallery.vue'
 import PhotoUpload from './PhotoUpload.vue'
-import ShareLink from './ShareLink.vue'
 import PhotoLike from './PhotoLike.vue'
 const props = defineProps({ api: Function, token: String })
 const resource = ref(null), detail = ref(null), loading = ref(true), error = ref(''), failedImages = ref({})
 let request = 0
 const base = computed(() => `/public-shares/${encodeURIComponent(props.token)}`)
 const files = computed(() => resource.value?.files || (resource.value?.document ? [resource.value.document] : []))
-const gallery = ref(null), canEdit = ref(false), showUpload = ref(false), shared = ref(null)
+const gallery = ref(null), canEdit = ref(false), showUpload = ref(false)
 const canUploadPhotos = computed(() => resource.value?.kind === 'folder' && resource.value.can_add_photos && (canEdit.value || resource.value.allow_uploads))
-function shareResource(photo = null) {
-  const address = new URL('/public-share/' + encodeURIComponent(props.token), location.origin)
-  if (resource.value?.folder_id) address.searchParams.set('folder', resource.value.folder_id)
-  if (photo) address.searchParams.set('photo', photo.id)
-  shared.value = { url: address.href, title: photo?.title || resource.value.title, photo: !!photo }
-}
 function uploaded(photo) { if (resource.value?.files && !resource.value.files.some(item => item.id === photo.id)) resource.value.files.push(photo) }
 function updatePhoto(photo) {
   if (!resource.value) return
@@ -68,14 +61,14 @@ onMounted(async () => {
 </script>
 <template>
   <section class="public-share" aria-label="Udostępniony zasób">
-    <header v-if="resource && resource.view_mode !== 'gallery'" class="public-share-heading"><div><span class="public-eyebrow"><Link :size="15" />Udostępnione przez link</span><h1>{{ resource?.title || 'Udostępniony zasób' }}</h1><p v-if="resource">Dostęp do {{ date(resource.expires) }} · Przeglądanie i pobieranie</p></div><div v-if="resource && !error" class="public-share-actions"><button :disabled="loading" @click="shareResource()"><Share2 :size="17" />Udostępnij</button><button v-if="canUploadPhotos" :disabled="loading" @click="showUpload = true"><ImagePlus :size="17" />Dodaj zdjęcia</button><a v-if="resource?.kind === 'folder' && !error" class="public-download" :href="`/api${base}/archive`"><Download :size="17" />Pobierz katalog ZIP</a></div></header>
+    <header v-if="resource && resource.view_mode !== 'gallery'" class="public-share-heading"><div><span class="public-eyebrow"><Link :size="15" />Udostępnione przez link</span><h1>{{ resource?.title || 'Udostępniony zasób' }}</h1><p v-if="resource">Dostęp do {{ date(resource.expires) }} · Przeglądanie i pobieranie</p></div><div v-if="resource && !error" class="public-share-actions"><button v-if="canUploadPhotos" :disabled="loading" @click="showUpload = true"><ImagePlus :size="17" />Dodaj zdjęcia</button><a v-if="resource?.kind === 'folder' && !error" class="public-download" :href="`/api${base}/archive`"><Download :size="17" />Pobierz katalog ZIP</a></div></header>
     <div v-if="error" class="public-error" role="alert"><AlertCircle :size="22" /><div><strong>Nie można otworzyć udostępnienia</strong><p>{{ error }}</p><button @click="load(resource?.folder_id)">Spróbuj ponownie</button></div></div>
     <p v-if="loading" class="public-loading" role="status">Wczytywanie…</p>
     <template v-if="resource && !error && !loading">
       <nav v-if="resource.kind === 'folder' && resource.breadcrumbs?.length > 1 && !detail" class="public-breadcrumbs" aria-label="Ścieżka udostępnionego katalogu"><template v-for="(folder, index) in resource.breadcrumbs" :key="folder.id"><ChevronRight v-if="index" :size="15" /><button :aria-current="folder.id === resource.folder_id ? 'page' : undefined" @click="load(folder.id)">{{ folder.name }}</button></template></nav>
       <div v-if="!detail && resource.folders?.length" class="public-folder-grid"><button v-for="folder in resource.folders || []" :key="folder.id" class="public-folder" @click="load(folder.id)"><Folder :size="30" /><span><strong>{{ folder.name }}</strong><small>Katalog</small></span><ChevronRight :size="18" /></button></div>
-      <PhotoGallery ref="gallery" :images="photos" :api="api" :token="token" :can-edit="canEdit" @share="shareResource" @caption-saved="updatePhoto" @activity-updated="updatePhoto" :load-location="photoLocation" :load-metadata="photoMetadata" :show-grid="resource.view_mode === 'gallery' && !detail">
-        <template #actions><button v-if="canUploadPhotos" class="gallery-action" @click="showUpload = true"><ImagePlus :size="17" />Dodaj zdjęcia</button><a v-if="resource.kind === 'folder'" class="gallery-action" :href="`/api${base}/archive`"><Download :size="17" />Pobierz</a><a v-else class="gallery-action" :href="url(resource.document, 'file')"><Download :size="17" />Pobierz</a><button class="gallery-action" @click="shareResource()"><Share2 :size="17" />Udostępnij</button></template>
+      <PhotoGallery ref="gallery" :images="photos" :api="api" :token="token" :can-edit="canEdit" @caption-saved="updatePhoto" @activity-updated="updatePhoto" :load-location="photoLocation" :load-metadata="photoMetadata" :show-grid="resource.view_mode === 'gallery' && !detail">
+        <template #actions><button v-if="canUploadPhotos" class="gallery-action" @click="showUpload = true"><ImagePlus :size="17" />Dodaj zdjęcia</button><a v-if="resource.kind === 'folder'" class="gallery-action" :href="`/api${base}/archive`"><Download :size="17" />Pobierz</a><a v-else class="gallery-action" :href="url(resource.document, 'file')"><Download :size="17" />Pobierz</a></template>
       </PhotoGallery>
       <section v-if="detail" class="public-detail" aria-label="Podgląd pliku"><div class="public-detail-toolbar"><button v-if="resource.view_mode !== 'preview' || resource.kind === 'folder'" @click="detail = null"><ArrowLeft :size="16" />Wróć do katalogu</button><a class="public-download" :href="url(detail, 'file')"><Download :size="16" />{{ detail.editor ? 'Pobierz PDF' : 'Pobierz plik' }}</a></div><h2>{{ detail.title }}</h2>
         <img v-if="detail.image" class="public-image" :src="url(detail, 'preview')" :alt="detail.title" />
@@ -89,7 +82,6 @@ onMounted(async () => {
       <div v-if="!detail && !files.length && !resource.folders?.length" class="public-empty"><Folder :size="40" /><h2>Ten katalog jest pusty</h2><p>Nie ma w nim dostępnych plików.</p></div>
     </template>
     <Teleport to="body"><PhotoUpload v-if="showUpload" :api="api" :endpoint="`${base}/${canEdit ? 'owner-photos' : 'photos'}`" :folder-id="resource.folder_id" @uploaded="uploaded" @close="showUpload = false" /></Teleport>
-    <ShareLink v-if="shared" v-bind="shared" @close="shared = null" />
   </section>
 </template>
 <style scoped>

@@ -94,10 +94,8 @@ Autor może usunąć swój komentarz, a zalogowany właściciel może moderować
 Podpisy nie są weryfikowaną tożsamością. Komentarz ma limit 1000 znaków,
 a jedna przeglądarka może dodać do danego linku maksymalnie 10 komentarzy na minutę.
 
-Przycisk **Udostępnij** kopiuje adres galerii, a przycisk udostępniania w podglądzie
-zdjęcia tworzy adres otwierający od razu wybrany kadr. Odbiorca takiego adresu nadal
-ma dostęp do pozostałej zawartości tego samego udostępnienia. Obsługiwane jest także
-systemowe udostępnianie, jeśli przeglądarka je udostępnia.
+Widok `/public-share/` oraz duży podgląd zdjęć nie mają przycisków **Udostępnij**.
+Właściciel tworzy i obsługuje linki w oknie udostępniania katalogu lub pliku w portalu.
 Właściciel katalogu może użyć **Dodaj zdjęcia** bezpośrednio w galerii.
 Opcja **Zezwalaj odbiorcom linku na dodawanie zdjęć** udostępnia ten formularz także
 osobom bez konta. Opcję można włączyć w oknie udostępniania przy tworzeniu linku
@@ -110,7 +108,7 @@ zdjęć na dobę na link. Pliki trafiają na konto właściciela katalogu; histo
 je jako dodane przez odbiorcę linku. Wyłączenie dodawania blokuje kolejne przesyłania,
 zachowując już dodane zdjęcia. Wygaśnięcie lub wyłączenie linku blokuje też zapis.
 
-Przyciski **Dodaj zdjęcia**, **Pobierz** i **Udostępnij** znajdują się w pasku
+Przyciski **Dodaj zdjęcia** i **Pobierz** znajdują się w pasku
 galerii przed przełącznikami siatki i listy. Serduszka przy zdjęciach w siatce,
 liście i kafelkach są klikalne. Polubienie wypełnia serce na czerwono; kolejne
 kliknięcie je cofa. Stan jest wspólny z dużym podglądem i zostaje po odświeżeniu
