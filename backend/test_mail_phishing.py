@@ -12,6 +12,46 @@ PAYMENT_LURE = ('Zaktualizuj informacje o swoim koncie. Szanowny Kliencie! '
                 'Zaloguj się na moje konto.')
 
 
+@pytest.mark.parametrize('sender,name,subject,expected', [
+    ('webmaster@72c9eed974.nxcli.io', 'iPKO biznes',
+     'Wymagane natychmiastowe działanie: Zaktualizuj aplikację iPKO biznes', True),
+    ('webmaster@72c9eed974.nxcli.io', 'PKO Bank Polski', 'Informacja', True),
+    ('webmaster@72c9eed974.nxcli.io', 'Obsługa', 'Zaktualizuj aplikację iPKO', True),
+    ('info@pkobp.pl.attacker.example', 'PKO', 'Informacja', True),
+    ('info@fakepkobp.pl', 'PKO', 'Informacja', True),
+    ('info@PKOBP.PL', 'PKO Bank Polski', 'Informacja', False),
+    ('info@powiadomienia.pkobp.pl', 'PKO', 'Informacja', False),
+    ('info@ipko.pl', 'iPKO biznes', 'Informacja', False),
+    ('biuro@example.com', 'Jan Kowalski', 'Potwierdzenie przelewu do PKO', False),
+    ('webmaster@72c9eed974.nxcli.io', 'Serwis', 'Aktualizacja strony', False),
+])
+def test_bank_identity_and_sender_domain_mismatch(sender, name, subject, expected):
+    reason = mail_rules.bank_impersonation_reason(sender, name, subject)
+    assert bool(reason) is expected
+    if expected:
+        assert reason.startswith('Podejrzenie phishingu:')
+        assert sender.split('@')[1].lower() in reason
+
+
+def test_bank_impersonation_warning_in_import_listing_and_preview_even_when_assigned(app_client):
+    main, client = app_client
+    message = promotion(client, 'iPKO biznes <webmaster@72c9eed974.nxcli.io>',
+                        'Wymagane natychmiastowe działanie: Zaktualizuj aplikację iPKO biznes',
+                        'Pilny komunikat iPKO biznes')
+    assert '72c9eed974.nxcli.io' in message['phishing_warning']
+    # Existing mail also gets the warning without reimport or a spam scan.
+    with main.db() as con:
+        con.execute("UPDATE client_mail SET category='',category_reason='',folder='inbox' WHERE id=?", (message['id'],))
+    listing = next(row for row in client.get('/api/client-mail').json() if row['id'] == message['id'])
+    assert listing['phishing_warning'] == message['phishing_warning']
+    preview = client.patch('/api/client-mail/' + message['id'],
+                           json={'version': listing['version'], 'unread': False}).json()
+    assert preview['phishing_warning'] == message['phishing_warning']
+    trusted = assign(client, preview)
+    assert trusted.status_code == 200
+    assert trusted.json()['phishing_warning'] == message['phishing_warning']
+
+
 @pytest.mark.parametrize('subject,content', [
     ('Zaktualizuj szczegóły płatności', PAYMENT_LURE),
     ('Aktualizacja danych płatności', PAYMENT_LURE),

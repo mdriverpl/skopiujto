@@ -48,7 +48,7 @@ def settings_status():
 def clean_header(value):
     return ''.join(char for char in value if ord(char) >= 32 and ord(char) != 127)
 
-def send_message(config, email, sender_name, subject, message):
+def send_message(config, email, sender_name, subject, message, attachments=()):
     mail = EmailMessage()
     mail['From'] = config['sender']
     mail['To'] = email
@@ -56,6 +56,10 @@ def send_message(config, email, sender_name, subject, message):
     mail['Date'] = formatdate(localtime=False)
     mail['Message-ID'] = make_msgid()
     mail.set_content(f'{message}\n\nWiadomość od: {sender_name}')
+    for filename, data in attachments:
+        mime, _ = mimetypes.guess_type(filename)
+        main_type, sub_type = (mime or 'application/octet-stream').split('/', 1)
+        mail.add_attachment(data, maintype=main_type, subtype=sub_type, filename=clean_header(filename))
     smtp = None
     try:
         if config['security'] == 'ssl':

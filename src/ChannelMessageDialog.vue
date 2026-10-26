@@ -1,11 +1,14 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { Send, X, Mail, MessageSquare, Users, History, BookOpen, Search, UserRound, Check } from 'lucide-vue-next'
-const props = defineProps({ api: Function, channel: String, group: { type: Boolean, default: true }, reply: Boolean, initialSubject: String, initialContent: String, initialRecipient: String, initialRecipientId: String })
+import ComposeAttachments from './ComposeAttachments.vue'
+import { attachmentSelection, hasAttachmentChanges, saveAttachmentSelection, downloadMailArchive } from './composeAttachments.js'
+const props = defineProps({ api: Function, channel: String, group: { type: Boolean, default: true }, reply: Boolean, initialSubject: String, initialContent: String, initialRecipient: String, initialRecipientId: String, embedded: Boolean, attachmentsTarget: String })
 const emit = defineEmits(['close', 'switch-channel', 'manual-email', 'sent'])
 const subject = ref(props.initialSubject || ''), content = ref(props.initialContent || '')
 const contacts = ref([]), selected = ref([]), search = ref(''), config = ref(null)
 const dictionaryId = ref('')
+const composeFiles = ref(attachmentSelection()), attachmentDraft = ref(null)
 const recipientSource = ref('contacts'), directEmail = ref(props.initialRecipient || '')
 const isGroup = computed(() => props.group !== false)
 const activeSource = computed(() => (!isGroup.value ? selected.value[0]?.startsWith('h:') : recipientSource.value === 'history') ? 'history' : props.channel === 'user' ? 'users' : 'dictionaries')
@@ -68,10 +71,30 @@ async function loadContacts() {
   } catch (err) { if (request === contactsRequest) error.value = err.message }
   finally { if (request === contactsRequest) loading.value = false }
 }
+async function saveFiles() {
+  const selection = composeFiles.value
+  if (!hasAttachmentChanges(selection)) return null
+  const saved = attachmentDraft.value
+  if (saved && !selection.files.length && !selection.drive.length && !selection.removed.length &&
+      selection.zip_enabled === !!saved.zip_enabled && selection.zip_name === saved.zip_name && selection.zip_password === (saved.zip_password || '')) return saved
+  if (!saved) attachmentDraft.value = await props.api('/client-mail/drafts', 'POST', { subject: subject.value, content: content.value })
+  attachmentDraft.value = await saveAttachmentSelection(props.api, attachmentDraft.value, selection)
+  composeFiles.value = attachmentSelection(attachmentDraft.value)
+  plan.value = null
+  return attachmentDraft.value.attachments.length ? attachmentDraft.value : null
+}
+async function downloadZip() {
+  if (busy.value) return
+  busy.value = true; error.value = ''
+  try { const draft = await saveFiles(); if (draft) await downloadMailArchive(draft.id) }
+  catch (err) { error.value = err.message }
+  finally { busy.value = false }
+}
 async function send() {
   if (!canSend.value) return
   busy.value = true; error.value = ''
   try {
+    const attachment = props.channel === 'email' ? await saveFiles() : null
     const results = []
     const manual = manualAddress.value
     const batches = []
@@ -85,7 +108,8 @@ async function send() {
         plan.value = await props.api('/messages/prepare', 'POST', { subject: subject.value.trim(), message: content.value.trim(),
           recipients: batches[index], source: activeSource.value, direct_email: props.channel === 'email' && index === 0 && manual ? manual : null,
           direct_sms: props.channel === 'sms' && index === 0 && manual ? manual : null,
-          dictionary_id: activeSource.value === 'dictionaries' && dictionaryId.value ? dictionaryId.value : null, channel: props.channel })
+          dictionary_id: activeSource.value === 'dictionaries' && dictionaryId.value ? dictionaryId.value : null, channel: props.channel,
+          ...(attachment ? { attachment_mail_id: attachment.id, attachment_version: attachment.version } : {}) })
         const unavailable = plan.value.recipients.filter(person => !person.available)
         if (unavailable.length || !plan.value.recipients.length) {
           const reason = unavailable.map(person => `${person.name}: ${person.reason}`).join('; ')
@@ -109,7 +133,7 @@ async function send() {
 onMounted(load)
 </script>
 <template>
-  <div class="channel-message-overlay" @keydown.esc.stop.prevent="close" @click.self="close"><form class="channel-message-dialog" :class="{ 'group-compose': isGroup }" role="dialog" aria-modal="true" aria-labelledby="channel-message-title" novalidate @submit.prevent="send">
+  <div class="channel-message-overlay" :class="{ embedded }" @keydown.esc.stop.prevent="close" @click.self="!embedded && close()"><form class="channel-message-dialog" :class="{ 'group-compose': isGroup }" :role="embedded ? undefined : 'dialog'" :aria-modal="embedded ? undefined : 'true'" aria-labelledby="channel-message-title" novalidate @submit.prevent="send">
     <header><div class="compose-heading"><span class="compose-emblem"><Send :size="23" /></span><div><h2 id="channel-message-title">{{ reply ? 'Odpowiedź' : isGroup ? 'Wiadomość do wielu osób' : 'Nowa wiadomość' }}</h2><p>{{ isGroup ? 'Wybierz odbiorców i napisz do nich w jednym miejscu.' : 'Wszystko, czego potrzebujesz, by być w kontakcie.' }}</p></div></div><button type="button" class="compose-close" :disabled="busy" aria-label="Zamknij wiadomość" @click="close"><X :size="19" /></button></header>
     <p v-if="error" class="channel-error" role="alert">{{ error }}</p><p v-if="loading" role="status">Wczytywanie odbiorców…</p>
     <p v-if="config && !available" class="channel-error">{{ config.channels[channel]?.message || 'Ten kanał wymaga konfiguracji.' }}</p>
@@ -130,6 +154,7 @@ onMounted(load)
         <label>Temat:<input v-model="subject" required maxlength="200" placeholder="Temat wiadomości" /></label>
         <label class="message-body-field">Treść:<textarea v-model="content" required :maxlength="limit" rows="10" placeholder="Napisz swoją wiadomość…" /><small class="channel-length">{{ content.length.toLocaleString('pl') }} / {{ limit.toLocaleString('pl') }}</small></label>
         <p v-if="channel === 'user'" class="channel-hint">Wiadomość zostanie dostarczona w portalu, bez e-maila.</p>
+        <Teleport :to="attachmentsTarget || 'body'" :disabled="!attachmentsTarget" defer><ComposeAttachments v-if="channel === 'email'" v-model="composeFiles" :api="api" :disabled="busy || loading || !!result" @update:model-value="plan = null" @download-zip="downloadZip" /></Teleport>
       </section>
     </fieldset>
     <ul v-if="result" class="channel-results"><li v-for="person in result.recipients" :key="person.id"><strong>{{ person.name }}</strong> — {{ person.status === 'sent' ? 'Wysłano' : person.reason || 'Wysyłka niepotwierdzona' }}</li></ul>
@@ -159,4 +184,15 @@ footer { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:18p
 @media(max-width:700px) { .channel-message-overlay { padding:10px; }.channel-message-dialog { max-height:95dvh; border-radius:17px; }header { padding:19px 18px; gap:8px; }.compose-emblem { width:38px; height:38px; border-radius:12px; }.compose-heading { gap:10px; }.compose-heading h2 { font-size:15px; }.compose-heading p { font-size:10px; }.compose-columns { grid-template-columns:1fr; gap:22px; }fieldset { padding:18px; }.channel-to { padding:14px; }.channel-recipients { min-height:0; max-height:175px; }.recipients-empty { padding:18px 8px; }.recipients-empty > span { width:42px; height:42px; margin-bottom:10px; }.recipient-heading { margin-bottom:12px; }.channel-options { gap:6px; }.channel-options button { flex:1; min-width:0; padding:10px 9px; }.message-body-field textarea { min-height:180px; }footer { padding:15px 18px; gap:8px; }footer button { padding:10px 12px; }footer .primary { padding-inline:12px; }.send-summary { flex:1; }.channel-error { margin-inline:18px; } }
 .channel-select-all,.channel-recipients > label { flex-direction:row; }.message-body-field { grid-template-rows:auto minmax(205px,1fr); align-content:start; }footer { position:sticky; bottom:0; z-index:1; background:var(--surface); }
 @media(prefers-reduced-motion:reduce) { input,textarea,select,.channel-options button { transition:none; } }
+.channel-message-overlay.embedded { position:static; display:flex; flex:1; min-width:0; min-height:0; padding:0; background:transparent; backdrop-filter:none; }
+.embedded .channel-message-dialog,.embedded .channel-message-dialog.group-compose { width:100%; max-height:none; min-width:0; flex:1; border:0; border-radius:0; box-shadow:none; }
+.embedded fieldset { flex:1; padding:18px; }
+.embedded .compose-columns { grid-template-columns:minmax(0,1fr); gap:18px; }
+.embedded .channel-recipients { min-height:0; max-height:180px; }
+.embedded header { padding:18px; }
+.embedded .compose-heading h2 { font-size:16px; }
+.embedded .compose-emblem { width:34px; height:34px; }
+.embedded .channel-message-panel { flex:1; }
+.embedded footer { padding:16px 18px; }
+.embedded .channel-message-dialog { overflow-y:auto; }
 </style>

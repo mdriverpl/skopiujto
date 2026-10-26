@@ -9,9 +9,9 @@ from typing import Literal
 from datetime import datetime, timedelta, timezone
 
 from email_validator import validate_email, EmailNotValidError
-from fastapi import Depends, File, HTTPException, Response, UploadFile, Query
+from fastapi import Depends, File, Form, HTTPException, Response, UploadFile, Query
 from pydantic import BaseModel, Field, field_validator
-from backend import ai, mailer, mail_settings, mail_sync, mail_rules, mail_attachments, mail_daily
+from backend import ai, mailer, mail_settings, mail_sync, mail_rules, mail_attachments, mail_daily, mail_compose, storage
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS client_mail(
@@ -45,6 +45,11 @@ def initialize(con):
     for column in ('category', 'category_source', 'category_reason', 'label_source'):
         if column not in existing:
             con.execute(f"ALTER TABLE client_mail ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+    for column, kind in (('zip_enabled', 'INTEGER NOT NULL DEFAULT 0'),
+                         ('zip_name', "TEXT NOT NULL DEFAULT 'zalaczniki.zip'"),
+                         ('zip_password_secret', "TEXT NOT NULL DEFAULT ''")):
+        if column not in existing:
+            con.execute(f'ALTER TABLE client_mail ADD COLUMN {column} {kind}')
 
 class Draft(BaseModel):
     recipient: str = Field(default='', max_length=254)
@@ -128,11 +133,18 @@ def parse_message(raw):
                 content=content.strip(), timestamp=timestamp, attachments=attachments)
 
 
-def install(app, db, user, now):
+def install(app, db, user, now, owned_document=None):
     def serialize(con, row, rules_context=None, attachments=None):
         result = dict(row)
+        result['zip_password'] = mail_compose.password(result)
+        result.pop('zip_password_secret', None)
         result.update(mail_rules.classify(row['sender_email'], rules_context if rules_context is not None else mail_rules.context(con, row['user_id'])))
-        result['phishing_warning'] = mail_rules.phishing_reason(row['subject'], row['content']) if result['government'] else ''
+        result['phishing_warning'] = ''
+        if row['folder'] not in ('sent', 'drafts'):
+            result['phishing_warning'] = mail_rules.bank_impersonation_reason(
+                row['sender_email'], row['sender_name'], row['subject']) or (
+                mail_rules.phishing_reason(row['subject'], row['content'])
+                if result['government'] or not result['safe'] else '')
         result['attachments_blocked'] = row['folder'] == 'spam' or row['category'] == 'spam'
         result['attachments'] = attachments if attachments is not None else [dict(a) for a in con.execute(
             'SELECT id,name,size FROM client_mail_attachments WHERE mail_id=? ORDER BY id', (row['id'],))]
@@ -320,6 +332,71 @@ def install(app, db, user, now):
                         (body.recipient, body.subject, body.content, identifier))
             return owned(con, identifier, current)
 
+    @app.post('/api/client-mail/{identifier}/attachments')
+    async def save_attachments(identifier: str, version: int = Form(..., ge=1),
+                               files: list[UploadFile] = File(default=[]),
+                               drive_ids: str = Form('[]', max_length=4000),
+                               remove_ids: str = Form('[]', max_length=4000),
+                               zip_enabled: bool = Form(False),
+                               zip_name: str = Form('zalaczniki.zip', max_length=200),
+                               zip_password: str = Form('', max_length=200), current=Depends(user)):
+        try:
+            drive = json.loads(drive_ids); removed = json.loads(remove_ids)
+            if any(not isinstance(items, list) or len(items) > 50 or
+                   any(not isinstance(item, str) or len(item) > 64 for item in items)
+                   for items in (drive, removed)): raise ValueError()
+        except (ValueError, TypeError):
+            raise HTTPException(422, 'Niepoprawna lista plików.') from None
+        if zip_password and not zip_enabled:
+            raise HTTPException(422, 'Włącz ZIP, aby ustawić hasło.')
+        parts = []
+        if len(files) + len(drive) > mail_compose.MAX_FILES:
+            raise HTTPException(422, 'Dodaj maksymalnie 50 plików.')
+        for upload in files:
+            data = await upload.read(mail_compose.MAX_TOTAL + 1)
+            parts.append((mail_compose.filename(upload.filename), data))
+            mail_compose.validate(parts)
+        with db() as con:
+            con.begin_write(); row = owned(con, identifier, current); check_version(row, version)
+            if row['folder'] != 'drafts': raise HTTPException(409, 'Załączniki można zmieniać tylko w szkicu.')
+            existing = {item['id'] for item in row['attachments']}
+            if set(removed) - existing: raise HTTPException(409, 'Lista załączników zmieniła się. Odśwież szkic.')
+            for doc_id in dict.fromkeys(drive):
+                if not owned_document: raise HTTPException(503, 'Dysk jest niedostępny.')
+                document = owned_document(con, doc_id, current)
+                if not document['filename']: raise HTTPException(422, 'Wybrany dokument nie ma pliku.')
+                if document['object_key']:
+                    body = storage.get(document['object_bucket'], document['object_key'])
+                    try: data = body.read(mail_compose.MAX_TOTAL + 1)
+                    finally: body.close()
+                elif document['file'] is not None: data = bytes(document['file'])
+                else: raise HTTPException(404, 'Wybrany plik jest niedostępny.')
+                parts.append((mail_compose.filename(document['filename']), data))
+                mail_compose.validate(parts)
+            for part_id in set(removed):
+                con.execute('DELETE FROM client_mail_attachments WHERE id=? AND mail_id=?', (part_id, identifier))
+            mail_compose.validate(mail_compose.originals(con, identifier) + parts)
+            mail_compose.store(con, identifier, parts)
+            if zip_enabled and not con.execute('SELECT 1 FROM client_mail_attachments WHERE mail_id=?', (identifier,)).fetchone():
+                raise HTTPException(422, 'Dodaj pliki do archiwum ZIP.')
+            con.execute('UPDATE client_mail SET zip_enabled=?,zip_name=?,zip_password_secret=?,version=version+1 WHERE id=?',
+                        (int(zip_enabled), mail_compose.archive_name(zip_name), mail_compose.encrypt_password(zip_password), identifier))
+            return owned(con, identifier, current)
+
+    @app.get('/api/client-mail/{identifier}/archive')
+    def download_archive(identifier: str, current=Depends(user)):
+        from urllib.parse import quote
+        with db() as con:
+            row = owned(con, identifier, current)
+            if row['attachments_blocked']: raise HTTPException(422, 'Najpierw przywróć wiadomość ze Spamu.')
+            parts = mail_compose.originals(con, identifier)
+            if not parts: raise HTTPException(422, 'Wiadomość nie ma załączników.')
+            if row['folder'] == 'sent' and row['zip_enabled'] and len(parts) == 1:
+                data = parts[0][1]
+            else: data = mail_compose.zip_bytes(parts, row['zip_password'])
+        return Response(data, media_type='application/zip', headers={
+            'Content-Disposition': "attachment; filename*=UTF-8''" + quote(row['zip_name']), 'Cache-Control': 'no-store'})
+
     @app.patch('/api/client-mail/{identifier}')
     def update(identifier: str, body: MailPatch, current=Depends(user)):
         with db() as con:
@@ -349,7 +426,12 @@ def install(app, db, user, now):
             if not row['subject'].strip() or not row['content'].strip():
                 raise HTTPException(422, 'Uzupełnij temat i treść wiadomości.')
             config, sender_name = mail_settings.smtp_config(con, current)
-            mailer.send_message(config, recipient, sender_name, row['subject'], row['content'])
+            parts = mail_compose.outgoing(con, row)
+            if parts: mailer.send_message(config, recipient, sender_name, row['subject'], row['content'], attachments=parts)
+            else: mailer.send_message(config, recipient, sender_name, row['subject'], row['content'])
+            if parts and row['zip_enabled']:
+                con.execute('DELETE FROM client_mail_attachments WHERE mail_id=?', (identifier,))
+                mail_compose.store(con, identifier, parts)
             con.execute("UPDATE client_mail SET folder='sent',sender_email=?,sender_name=?,created_at=?,version=version+1 WHERE id=?",
                         (config['sender'], sender_name, now(), identifier))
             return owned(con, identifier, current)

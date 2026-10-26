@@ -16,3 +16,4 @@ reportlab>=4.4,<5
 pypdf>=6,<7
 
 pywebpush>=2,<3
+pyzipper>=0.4,<1

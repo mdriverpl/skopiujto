@@ -37,6 +37,10 @@ import FolderTasks from './FolderTasks.vue'
 import { resourceTasks } from './resourceTasks.js'
 import { apiErrorDetail } from './apiErrors.js'
 import DocumentStatusDialog from './DocumentStatusDialog.vue'
+import { Share2 } from 'lucide-vue-next'
+const ExternalShareDialog = defineAsyncComponent(() => import('./ExternalShareDialog.vue'))
+const PublicShare = defineAsyncComponent(() => import('./PublicShare.vue'))
+const shareResource = ref(null)
 import AddDocumentDialog from './AddDocumentDialog.vue'
 const TemplatesPanel = defineAsyncComponent(() => import('./TemplatesPanel.vue'))
 const DictionariesPanel = defineAsyncComponent(() => import('./DictionariesPanel.vue'))
@@ -110,7 +114,7 @@ async function imageSaved() {
 
 const user = ref(null)
 const sidebarOpen = ref(false)
-const workspaceVisible = computed(() => !!user.value && !user.value.must_change_password && !shareToken && !acceptanceToken && !surveyToken)
+const workspaceVisible = computed(() => !!user.value && !user.value.must_change_password && !shareToken && !publicShareToken && !acceptanceToken && !surveyToken)
 const passwordDialog = ref(false)
 const accountMenu = ref(false)
 const passwordNotice = ref('')
@@ -123,7 +127,7 @@ async function passwordSaved(account) {
 }
 const setupRequired = ref(false)
 const connecting = ref(true)
-const marketingVisible = computed(() => !user.value && !connecting.value && !shareToken && !acceptanceToken && !surveyToken)
+const marketingVisible = computed(() => !user.value && !connecting.value && !shareToken && !publicShareToken && !acceptanceToken && !surveyToken)
 const busy = ref(false)
 const error = ref('')
 const credentials = ref({ name: '', password: '' })
@@ -286,6 +290,27 @@ async function dropFile(event, folderId) {
   })
 }
 
+const folderDownloadProgress = ref('')
+async function downloadFolder(folder) {
+  await run(async () => {
+    folderDownloadProgress.value = `Przygotowywanie ZIP katalogu „${folder.name}”…`
+    try {
+      const response = await fetch(`/api/folders/${encodeURIComponent(folder.id)}/archive`, {
+        credentials: 'same-origin', headers: { 'X-Account-ID': user.value.id }
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => null)
+        throw new Error(apiErrorDetail(data?.detail) || 'Nie udało się pobrać katalogu.')
+      }
+      const url = URL.createObjectURL(await response.blob())
+      const link = document.createElement('a')
+      link.href = url
+      link.download = folder.name.replace(/[\\/:*?"<>|]/g, '_') + '.zip'
+      document.body.append(link); link.click(); link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } finally { folderDownloadProgress.value = '' }
+  })
+}
 async function downloadPdf(doc) {
   await run(async () => {
     if (editor.value === doc && canEditEditor.value) {
@@ -378,6 +403,7 @@ const canEditEditor = computed(() => editor.value && (!editor.value.id || editor
 const statuses = ['Szkic', 'W toku', 'Do podpisania', 'Do modyfikacji', 'Do akceptacji', 'Gotowy', 'Archiwum']
 const shared = ref(null)
 const shareToken = location.pathname.startsWith('/share/') ? location.pathname.split('/')[2] : null
+const publicShareToken = location.pathname.startsWith('/public-share/') ? location.pathname.split('/')[2] : null
 const acceptanceToken = location.pathname.startsWith('/accept/') ? location.pathname.split('/')[2] : null
 const surveyToken = location.pathname.startsWith('/survey/') ? location.pathname.split('/')[2] : null
 const files = computed(() => documents.value)
@@ -472,7 +498,7 @@ async function refreshAccess() {
 async function connect() {
   connecting.value = true
   await run(async () => {
-    if (acceptanceToken || surveyToken) return
+    if (acceptanceToken || surveyToken || publicShareToken) return
     if (shareToken) {
       shared.value = await api(`/shared/${encodeURIComponent(shareToken)}`)
       return
@@ -620,7 +646,7 @@ async function refreshSurveyCount() {
 }
 function refreshWorkspace() { refreshActivity(); refreshSurveyCount() }
 function applyInitialSection() {
-  if (!user.value || user.value.must_change_password || shareToken || acceptanceToken || surveyToken) return
+  if (!user.value || user.value.must_change_password || shareToken || publicShareToken || acceptanceToken || surveyToken) return
   const address = new URL(window.location.href)
   const section = address.searchParams.get('section')
   if (!['mail', 'tasks', 'calendar'].includes(section)) return
@@ -665,6 +691,7 @@ onBeforeUnmount(() => {
 
       <FileApproval v-else-if="acceptanceToken" :token="acceptanceToken" :api="api" />
       <SurveyPublic v-else-if="surveyToken" :token="surveyToken" :api="api" />
+      <PublicShare v-else-if="publicShareToken" :token="publicShareToken" :api="api" />
       <article v-else-if="shared" class="shared-document panel">
         <span class="eyebrow">Udostępniony dokument · {{ shared.category }}</span>
         <h1>{{ shared.title }}</h1><RichTextEditor :model-value="shared.rich_content" :plain-text="shared.content" :editable="false" />
@@ -700,8 +727,9 @@ onBeforeUnmount(() => {
             <Teleport to="#workspace-title"><div><h1>Dokumenty</h1><p>Dodawaj katalogi i dokumenty w bieżącym katalogu.</p></div></Teleport>
             <p v-if="!canAddCurrent" class="muted">Nie masz uprawnienia do dodawania w tym katalogu.</p>
           </header>
-          <nav class="breadcrumbs" aria-label="Ścieżka folderu"><button :class="{ 'folder-drop-target': dropFolder === (view === 'documents' ? documentsFolderId : null) }" @dragover="dragOverFolder($event, view === 'documents' ? documentsFolderId : null)" @dragleave="dropFolder = undefined" @drop.stop="dropFile($event, view === 'documents' ? documentsFolderId : null)" :disabled="busy" :aria-current="view === 'documents' && currentFolder === documentsFolderId ? 'page' : undefined" @click="navigateFolder(view === 'documents' ? documentsFolderId : null)"><Files v-if="view === 'documents'" :size="16" /><HardDrive v-else :size="16" /> {{ view === 'documents' ? '\\Dokumenty' : 'Mój dysk' }}</button><template v-for="folder in breadcrumbs" :key="folder.id"><ChevronRight :size="15" /><button :class="{ 'folder-drop-target': dropFolder === folder.id }" @dragover="dragOverFolder($event, folder.id)" @dragleave="dropFolder = undefined" @drop.stop="dropFile($event, folder.id)" :disabled="busy" :aria-current="folder.id === currentFolder ? 'page' : undefined" @click="navigateFolder(folder.id)">{{ folder.name }}</button></template><button v-if="currentFolderInfo?.permissions?.read" class="icon-button" :disabled="busy" title="Historia katalogu" aria-label="Historia katalogu" @click="historyTarget = { ...currentFolderInfo, kind: 'folder' }"><History :size="17" /></button></nav>
+          <nav class="breadcrumbs" aria-label="Ścieżka folderu"><button :class="{ 'folder-drop-target': dropFolder === (view === 'documents' ? documentsFolderId : null) }" @dragover="dragOverFolder($event, view === 'documents' ? documentsFolderId : null)" @dragleave="dropFolder = undefined" @drop.stop="dropFile($event, view === 'documents' ? documentsFolderId : null)" :disabled="busy" :aria-current="view === 'documents' && currentFolder === documentsFolderId ? 'page' : undefined" @click="navigateFolder(view === 'documents' ? documentsFolderId : null)"><Files v-if="view === 'documents'" :size="16" /><HardDrive v-else :size="16" /> {{ view === 'documents' ? '\\Dokumenty' : 'Mój dysk' }}</button><template v-for="folder in breadcrumbs" :key="folder.id"><ChevronRight :size="15" /><button :class="{ 'folder-drop-target': dropFolder === folder.id }" @dragover="dragOverFolder($event, folder.id)" @dragleave="dropFolder = undefined" @drop.stop="dropFile($event, folder.id)" :disabled="busy" :aria-current="folder.id === currentFolder ? 'page' : undefined" @click="navigateFolder(folder.id)">{{ folder.name }}</button></template><button v-if="currentFolderInfo?.permissions?.read" class="icon-button" :disabled="busy" title="Historia katalogu" aria-label="Historia katalogu" @click="historyTarget = { ...currentFolderInfo, kind: 'folder' }"><History :size="17" /></button><button v-if="currentFolderInfo?.permissions?.read" :disabled="busy" title="Pobierz katalog z podkatalogami jako ZIP" aria-label="Pobierz bieżący katalog jako ZIP" @click="downloadFolder(currentFolderInfo)"><Download :size="17" /> Pobierz katalog ZIP</button><button v-if="currentFolderInfo?.can_share" :disabled="busy" aria-label="Udostępnij bieżący katalog przez link" @click="shareResource = { ...currentFolderInfo, kind: 'folder' }"><Share2 :size="17" /> Udostępnij</button></nav>
           <input ref="fileInput" class="file-picker" type="file" multiple aria-label="Wybierz pliki do przesłania" :disabled="busy" @change="uploadFiles($event.target.files)" />
+          <p v-if="folderDownloadProgress" class="muted" role="status">{{ folderDownloadProgress }}</p>
           <p v-if="uploadProgress" class="muted" role="status">{{ uploadProgress }}</p>
           <section class="toolbar drive-toolbar page-menu"><Teleport to="#workspace-search"><div class="search"><Search :size="18" /><input v-model="search" placeholder="Szukaj pliku…" aria-label="Szukaj pliku" /></div></Teleport><div class="toolbar-controls"><select v-model="typeFilter" aria-label="Filtruj typ pliku"><option v-for="type in fileTypes" :key="type">{{ type }}</option></select><div class="layout-switch" role="group" aria-label="Widok plików"><button :aria-pressed="fileLayout === 'list'" title="Lista" aria-label="Widok listy" @click="changeFileLayout('list')"><List :size="18" /> Lista</button><button :aria-pressed="fileLayout === 'grid'" title="Kafelki" aria-label="Widok kafelków" @click="changeFileLayout('grid')"><LayoutGrid :size="18" /> Kafelki</button><button :aria-pressed="fileLayout === 'icons'" title="Ikony" aria-label="Widok ikon" @click="changeFileLayout('icons')"><Grid3X3 :size="18" /> Ikony</button></div><div v-if="canAddCurrent || view === 'documents'" class="drive-actions"><button :disabled="busy || !canAddCurrent" @click="openNewFolder"><FolderPlus :size="18" /> Dodaj katalog</button><button :disabled="busy || !canAddCurrent" @click="openUploadPicker"><Upload :size="18" /> Prześlij pliki</button><button class="primary" :disabled="busy || !canAddCurrent" @click="openAddDocument"><Plus :size="18" /> Dodaj dokument</button></div></div></section>
           <section class="panel drive-list" :class="{ 'drive-grid': fileLayout === 'grid', 'drive-icons': fileLayout === 'icons' }" aria-label="Pliki na dysku">
@@ -714,12 +742,12 @@ onBeforeUnmount(() => {
             <div v-for="folder in filteredFolders" :key="folder.id" class="drive-row" :class="{ 'folder-drop-target': dropFolder === folder.id }" @dragover="dragOverFolder($event, folder.id)" @dragleave="dropFolder = undefined" @drop.stop="dropFile($event, folder.id)">
               <button class="folder-open document-title" :disabled="busy" @click="navigateFolder(folder.id)"><span class="file-icon folder-icon"><Folder :size="22" /></span><span><span class="folder-label"><strong>{{ folder.name }}</strong><span class="folder-access-badge" :class="folder.access_mode" :title="folderAccessInfo(folder).label" role="img" :aria-label="folderAccessInfo(folder).label"><component :is="folderAccessInfo(folder).icon" :size="14" aria-hidden="true" /></span></span><small>Folder</small></span></button>
               <span class="muted file-size">—</span><span class="muted date">{{ date(folder.created_at) }}</span>
-              <div class="file-actions"><button v-if="folder.permissions?.read" class="icon-button" :disabled="busy" title="Historia zmian" :aria-label="`Historia katalogu ${folder.name}`" @click="historyTarget = { ...folder, kind: 'folder' }"><History :size="17" /></button><button v-if="folder.permissions?.read" class="icon-button" title="Dodaj zadanie" :disabled="busy" :aria-label="`Dodaj zadanie do katalogu ${folder.name}`" @click="addResourceTask(folder, true)"><ClipboardPlus :size="18" /></button><button v-if="folder.permissions?.edit" class="icon-button" :disabled="busy" :aria-label="`Zmień nazwę folderu ${folder.name}`" title="Zmień nazwę" @click="folderEditing = folder; folderName = folder.name; error = ''; folderDialog = true"><Pencil :size="17" /></button><button v-if="folder.permissions?.delete" class="icon-button delete-button" :disabled="busy" :aria-label="`Usuń folder ${folder.name}`" title="Usuń pusty folder" @click="deleteItem(folder, true)"><Trash2 :size="18" /></button></div>
+              <div class="file-actions"><button v-if="folder.can_share" class="icon-button" :disabled="busy" title="Udostępnij przez link zewnętrzny" :aria-label="`Udostępnij katalog ${folder.name}`" @click="shareResource = { ...folder, kind: 'folder' }"><Share2 :size="18" /></button><button v-if="folder.permissions?.read" class="icon-button" :disabled="busy" title="Pobierz katalog jako ZIP" :aria-label="`Pobierz katalog ${folder.name} jako ZIP`" @click="downloadFolder(folder)"><Download :size="18" /></button><button v-if="folder.permissions?.read" class="icon-button" :disabled="busy" title="Historia zmian" :aria-label="`Historia katalogu ${folder.name}`" @click="historyTarget = { ...folder, kind: 'folder' }"><History :size="17" /></button><button v-if="folder.permissions?.read" class="icon-button" title="Dodaj zadanie" :disabled="busy" :aria-label="`Dodaj zadanie do katalogu ${folder.name}`" @click="addResourceTask(folder, true)"><ClipboardPlus :size="18" /></button><button v-if="folder.permissions?.edit" class="icon-button" :disabled="busy" :aria-label="`Zmień nazwę folderu ${folder.name}`" title="Zmień nazwę" @click="folderEditing = folder; folderName = folder.name; error = ''; folderDialog = true"><Pencil :size="17" /></button><button v-if="folder.permissions?.delete" class="icon-button delete-button" :disabled="busy" :aria-label="`Usuń folder ${folder.name}`" title="Usuń pusty folder" @click="deleteItem(folder, true)"><Trash2 :size="18" /></button></div>
             </div>
             <div v-for="file in filteredFiles" :key="file.id" class="drive-row" :class="{ 'file-dragging': draggedFile?.id === file.id }" :draggable="!busy && !!file.permissions?.move" @dragstart="startFileDrag($event, file)" @dragend="endFileDrag">
               <span class="document-title"><ImagePreview v-if="fileLayout === 'grid' && fileType(file.filename) === 'Obrazy'" :document-id="file.id" :version="file.version" :name="file.filename" /><span v-else class="file-icon" :class="fileType(file.filename)"><component :is="fileIcons[fileType(file.filename)]" :size="22" /></span><span><button class="document-open" :disabled="busy" @click="openFile(file)"><strong>{{ file.title }}</strong></button><small>{{ fileType(file.filename) }}{{ file.filename && file.title !== file.filename ? ` · ${file.filename}` : '' }}</small><button v-if="file.permissions?.workflow" class="workflow-status" :class="{ 'requires-action': file.active_actions?.length }" :disabled="busy" :aria-label="`Zmień status: ${file.title}`" title="Zmień status dokumentu" @click="statusDocument = file">{{ file.status }}<ChevronDown :size="12" /></button><small v-else-if="file.active_actions?.length" class="workflow-readonly">{{ file.status }}</small><button v-if="file.approvals && Object.values(file.approvals).some(count => count > 0)" class="approval-summary" :class="{ accepted: file.approvals.accepted > 0 }" :disabled="busy" title="Akceptacje obecnej wersji pliku" @click="emailFile = file">Akceptacje: {{ file.approvals.accepted }}<span v-if="file.approvals.waiting"> · oczekuje {{ file.approvals.waiting }}</span><span v-if="file.approvals.failed"> · błędy {{ file.approvals.failed }}</span></button></span></span>
               <span class="muted file-size">{{ formatSize(file.file_size) }}</span><span class="muted date">{{ date(file.updated_at) }}</span>
-              <div class="file-actions"><button v-if="/\.pdf$/i.test(file.filename || '')" class="icon-button" :disabled="busy" aria-label="Podgląd PDF" title="Podgląd PDF" @click="pdfPreviewFile = file"><Eye :size="18" /></button><button class="icon-button" :disabled="busy" :aria-label="`Historia zmian: ${file.filename || file.title}`" title="Historia zmian" @click="historyTarget = { ...file, kind: 'document' }"><History :size="17" /></button><button class="icon-button" :disabled="busy" :aria-label="`Dodaj zadanie do pliku ${file.filename || file.title}`" title="Dodaj zadanie" @click="addResourceTask(file)"><ClipboardPlus :size="18" /></button><button v-if="canViewEmails(file)" class="icon-button" :disabled="busy" :aria-label="`Wyślij e-mailem i sprawdź akceptacje: ${file.filename}`" title="Wyślij e-mailem / akceptacje" @click="emailFile = file"><Mail :size="18" /></button><button v-if="fileType(file.filename) === 'Obrazy'" class="icon-button" :disabled="busy" :aria-label="`Obraz i metadane: ${file.filename}`" title="Kadrowanie, rozdzielczość i metadane" @click="imageEditorFile = file"><Image :size="18" /></button><button v-if="file.permissions?.edit && fileType(file.filename) !== 'Obrazy'" class="icon-button" :disabled="busy" :aria-label="`Edytuj opis pliku ${file.filename || file.title}`" :title="file.filename ? 'Edytuj opis' : 'Edytuj dokument'" @click="openDocument(file)"><Pencil :size="17" /></button><button v-if="!file.filename" class="download-button" :disabled="busy" :aria-label="`Pobierz PDF: ${file.title}`" title="Pobierz PDF" @click="downloadPdf(file)"><Download :size="19" /><span>PDF</span></button><a v-if="file.filename" class="download-button" :href="`/api/documents/${file.id}/file`" :aria-label="`Pobierz ${file.filename}`" title="Pobierz plik"><Download :size="19" /></a><button v-if="file.permissions?.delete" class="icon-button delete-button" :disabled="busy" :aria-label="`Usuń plik ${file.filename || file.title}`" title="Usuń plik" @click="deleteItem(file)"><Trash2 :size="18" /></button></div>
+              <div class="file-actions"><button v-if="file.can_share" class="icon-button" :disabled="busy" title="Udostępnij przez link zewnętrzny" :aria-label="`Udostępnij plik ${file.filename || file.title}`" @click="shareResource = { ...file, kind: 'document' }"><Share2 :size="18" /></button><button v-if="/\.pdf$/i.test(file.filename || '')" class="icon-button" :disabled="busy" aria-label="Podgląd PDF" title="Podgląd PDF" @click="pdfPreviewFile = file"><Eye :size="18" /></button><button class="icon-button" :disabled="busy" :aria-label="`Historia zmian: ${file.filename || file.title}`" title="Historia zmian" @click="historyTarget = { ...file, kind: 'document' }"><History :size="17" /></button><button class="icon-button" :disabled="busy" :aria-label="`Dodaj zadanie do pliku ${file.filename || file.title}`" title="Dodaj zadanie" @click="addResourceTask(file)"><ClipboardPlus :size="18" /></button><button v-if="canViewEmails(file)" class="icon-button" :disabled="busy" :aria-label="`Wyślij e-mailem i sprawdź akceptacje: ${file.filename}`" title="Wyślij e-mailem / akceptacje" @click="emailFile = file"><Mail :size="18" /></button><button v-if="fileType(file.filename) === 'Obrazy'" class="icon-button" :disabled="busy" :aria-label="`Obraz i metadane: ${file.filename}`" title="Kadrowanie, rozdzielczość i metadane" @click="imageEditorFile = file"><Image :size="18" /></button><button v-if="file.permissions?.edit && fileType(file.filename) !== 'Obrazy'" class="icon-button" :disabled="busy" :aria-label="`Edytuj opis pliku ${file.filename || file.title}`" :title="file.filename ? 'Edytuj opis' : 'Edytuj dokument'" @click="openDocument(file)"><Pencil :size="17" /></button><button v-if="!file.filename" class="download-button" :disabled="busy" :aria-label="`Pobierz PDF: ${file.title}`" title="Pobierz PDF" @click="downloadPdf(file)"><Download :size="19" /><span>PDF</span></button><a v-if="file.filename" class="download-button" :href="`/api/documents/${file.id}/file`" :aria-label="`Pobierz ${file.filename}`" title="Pobierz plik"><Download :size="19" /></a><button v-if="file.permissions?.delete" class="icon-button delete-button" :disabled="busy" :aria-label="`Usuń plik ${file.filename || file.title}`" title="Usuń plik" @click="deleteItem(file)"><Trash2 :size="18" /></button></div>
             </div>
             <div v-if="!filteredFiles.length && !filteredFolders.length" class="empty"><Folder :size="39" /><h2>{{ search || typeFilter !== 'Wszystkie' ? 'Brak wyników' : currentFolder ? 'Ten folder jest pusty' : 'Twój dysk jest gotowy' }}</h2><p class="muted">{{ search || typeFilter !== 'Wszystkie' ? 'Zmień wyszukiwanie lub typ pliku.' : canAddCurrent ? 'Dodaj pliki lub utwórz folder, aby je uporządkować.' : 'Brak dostępnych plików. Dostęp do folderów nadaje administrator.' }}</p><button v-if="canAddCurrent" class="primary" :disabled="busy" @click="openAddDocument"><Plus :size="17" /> Dodaj dokument</button></div>
           </section>
@@ -739,6 +767,7 @@ onBeforeUnmount(() => {
     <div v-if="pwaDialog && user && !user.must_change_password && !user.impersonation" class="modal-backdrop pwa-backdrop"><PwaSettings :api="api" @close="pwaDialog = false" /></div>
     <div v-if="passwordDialog && user && !user.must_change_password" class="modal-backdrop"><PasswordChange :api="api" @close="passwordDialog = false" @saved="passwordSaved" /></div>
     <ResourceHistory v-if="historyTarget && user" :resource="historyTarget" :api="api" @close="historyTarget = null" />
+    <ExternalShareDialog v-if="shareResource && user" :key="`${shareResource.kind}:${shareResource.id}`" :resource="shareResource" :api="api" @close="shareResource = null" />
     <AddDocumentDialog v-if="addDocumentDialog && user" :templates="templates" :api="api" :folder-id="currentFolder" :folder-name="currentFolderInfo?.name" @close="addDocumentDialog = false" @choose="chooseNewDocument" @upload="openUploadPicker" />
     <DocumentStatusDialog v-if="statusDocument && user" :document="statusDocument" :api="api" @close="statusDocument = null" @saved="statusSaved" />
     <TasksPanel v-if="taskTarget && user" dialog-only :initial-target="taskTarget" :api="api" :current-user="user" :documents="documents" :folders="folders" @close="taskTarget = null" @updated="run(loadDocuments)" />

@@ -41,7 +41,32 @@ Uruchom frontend przez `npm run dev`. Backend:
 
 Aplikacja: http://127.0.0.1:5173. Konfiguracja S3: [backend/S3.md](backend/S3.md).
 
+Nowe e-maile i odpowiedzi, także do wielu odbiorców, obsługują pliki z komputera
+oraz z Dysku portalu (do 50 plików, łącznie 20 MB). Pliki z Dysku są kopiowane
+do wiadomości po sprawdzeniu prawa odczytu. Szkic zachowuje załączniki również
+po błędzie SMTP. Można wysłać pliki osobno albo spakować je w jeden ZIP,
+opcjonalnie szyfrowany hasłem (AES-256), i pobrać ZIP na komputer.
+Hasło jest zapisywane przy wiadomości i dostępne w jej podglądzie dla nadawcy;
+nie jest dopisywane do e-maila. W bazie hasło jest szyfrowane kluczem
+`EDOCUMENTS_MAIL_SETTINGS_KEY`, używanym również przez ustawienia poczty.
+Po wysłaniu zapisane załączniki odpowiadają plikom faktycznie wysłanym przez SMTP.
+
 ## Pomoc i dokumentacja w aplikacji
+
+W Dokumentach i na Dysku przy ścieżce katalogu oraz w akcjach każdego folderu
+jest dostępne **Pobierz katalog ZIP**. Archiwum zachowuje podkatalogi, puste
+foldery i oryginalne pliki. Dokumenty utworzone w edytorze są eksportowane do PDF.
+Pobierane są wyłącznie zasoby, do których bieżące konto ma prawo odczytu.
+
+Przycisk **Udostępnij** przy katalogu lub pliku tworzy link zewnętrzny dostępny
+bez logowania. Właściciel wybiera widok: **Katalog**, **Galeria**, **Kafelki**,
+a dla pojedynczego pliku także **Podgląd**. Link może być ważny przez 24 godziny,
+7, 30 lub 90 dni. W oknie udostępniania można skopiować nowy link, zmienić widok
+istniejącego linku lub wyłączyć dostęp. Starsze linki `/share/` działają nadal.
+Link do katalogu pokazuje aktualne własne zasoby nadawcy w tym katalogu
+i podkatalogach. Nie obejmuje plików innych autorów. Publiczny widok obsługuje
+pobieranie plików, ZIP katalogu, miniatury zdjęć i podgląd PDF lub dokumentu.
+Ważność linku i aktualne uprawnienia właściciela są sprawdzane przy każdym odczycie.
 
 Pozycja **Pomoc** w menu otwiera wyszukiwane instrukcje modułów. Ikona książki
 w nagłówku otwiera pomoc dotyczącą bieżącego modułu.

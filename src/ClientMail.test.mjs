@@ -1,3 +1,4 @@
+import { attachmentSelection, hasAttachmentChanges, saveAttachmentSelection, downloadMailArchive } from './composeAttachments.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -11,7 +12,7 @@ const compiled = compileScript(parse(readFileSync(new URL('./ClientMail.vue', im
   { id: 'mail-test' }).content.replace(/^import .*$/gm, '').replace('export default', 'globalThis.component =')
 function panel(api, overrides = {}, emit = () => {}, fetcher = globalThis.fetch, localStorage) {
   const mounted = []
-  const context = { mailSenderKind, loadUnifiedMail, isEmailMessage, isSpamMessage, isReceivedMessage, sourceKind, computed, ref, watch, localStorage, onMounted(callback) { mounted.push(callback) }, FormData, fetch: fetcher, MailSettings: {}, MailTaskDialog: {}, MessageChannelTabs: {}, ChannelMessageDialog: {} }
+  const context = { attachmentSelection, hasAttachmentChanges, saveAttachmentSelection, downloadMailArchive, FormData, ComposeAttachments: {}, mailSenderKind, loadUnifiedMail, isEmailMessage, isSpamMessage, isReceivedMessage, sourceKind, computed, ref, watch, localStorage, onMounted(callback) { mounted.push(callback) }, FormData, fetch: fetcher, MailSettings: {}, MailTaskDialog: {}, MessageChannelTabs: {}, ChannelMessageDialog: {} }
   for (const icon of ['ClipboardPlus', 'Mail', 'Users', 'MessageSquare', 'Inbox', 'Send', 'FileText', 'Archive', 'ShieldAlert', 'Trash2', 'Handshake', 'Landmark', 'UserRound', 'Megaphone', 'Bell', 'Ban']) context[icon] = {}
   runInNewContext(compiled, context)
   const state = context.component.setup(reactive({ api, ...overrides }), { expose() {}, emit })
@@ -21,6 +22,32 @@ function panel(api, overrides = {}, emit = () => {}, fetcher = globalThis.fetch,
 const message = { id: 'one', folder: 'inbox', sender_name: 'Jan Kowalski', sender_email: 'jan@example.com',
   recipient: 'ja@example.com', subject: 'Oferta', content: 'Warunki współpracy', unread: 1, label: 'urgent',
   version: 1, created_at: '2026-10-13T10:00:00Z', attachments: [{ id: 'a', name: 'Oferta.pdf' }] }
+
+test('failed SMTP keeps uploaded attachments and ZIP settings in the saved draft for retry', async () => {
+  const calls = []
+  const api = async (path, method, body) => {
+    calls.push({ path, method, body })
+    if (path === '/client-mail/drafts') return { ...message, id: 'draft-files', folder: 'drafts', attachments: [], version: 1, ...body }
+    if (path.endsWith('/attachments')) return { ...message, id: 'draft-files', folder: 'drafts', version: 2,
+      attachments: [{ id: 'uploaded', name: 'Contract.pdf', size: 8 }], zip_enabled: 1, zip_name: 'files.zip', zip_password: 'Secret!' }
+    if (path.endsWith('/send')) throw new Error('SMTP unavailable')
+  }
+  const state = panel(api)
+  state.compose()
+  state.composer.value = { recipient: 'anna@example.com', subject: 'Files', content: 'Attached' }
+  state.composeFiles.value = { ...attachmentSelection(), files: [new File(['contract'], 'Contract.pdf')],
+    zip_enabled: true, zip_name: 'files.zip', zip_password: 'Secret!' }
+  await state.send()
+  const request = calls.find(call => call.path.endsWith('/attachments'))
+  assert.equal(request.body.get('files').name, 'Contract.pdf')
+  assert.equal(request.body.get('zip_password'), 'Secret!')
+  assert.equal(state.composer.value.id, 'draft-files')
+  assert.equal(state.composer.value.version, 2)
+  assert.equal(state.composeFiles.value.existing[0].id, 'uploaded')
+  assert.equal(state.composeFiles.value.files.length, 0)
+  assert.equal(state.composeFiles.value.zip_password, 'Secret!')
+  assert.match(state.error.value, /SMTP unavailable/)
+})
 
 test('single compose, group compose and replies keep their own layout and source', () => {
   const state = panel(async () => ({}))

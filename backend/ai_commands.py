@@ -10,7 +10,7 @@ import httpx
 from email_validator import validate_email, EmailNotValidError
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
-from backend import ai, mailer, sms, mail_settings
+from backend import ai, mailer, sms, mail_settings, mail_compose
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS ai_command_jobs(
@@ -37,6 +37,8 @@ class ManualInput(CommandInput):
     recipients: list[str] = Field(default_factory=list, max_length=100)
     direct_email: str | None = Field(default=None, max_length=254)
     direct_sms: str | None = Field(default=None, max_length=40)
+    attachment_mail_id: str | None = Field(default=None, max_length=64)
+    attachment_version: int | None = Field(default=None, ge=1)
 
     @field_validator('direct_sms')
     @classmethod
@@ -55,6 +57,8 @@ class ManualInput(CommandInput):
         if not self.recipients and not self.direct_email and not self.direct_sms: raise ValueError('Wybierz odbiorcę wiadomości.')
         if self.direct_email and self.channel != 'email': raise ValueError('Adres e-mail wymaga kanału E-mail.')
         if self.direct_sms and self.channel != 'sms': raise ValueError('Numer telefonu wymaga kanału SMS.')
+        if self.attachment_mail_id and (self.channel != 'email' or not self.attachment_version):
+            raise ValueError('Załączniki wymagają kanału E-mail i aktualnej wersji szkicu.')
         if len(self.recipients) + bool(self.direct_email) + bool(self.direct_sms) > 100: raise ValueError('Wybierz do 100 odbiorców w jednej partii.')
         return self
 
@@ -213,9 +217,20 @@ def install(app, db, user, now):
         if getattr(body, 'direct_sms', None): payload['scope']['direct_sms'] = body.direct_sms
         identifier = secrets.token_hex(16)
         with db() as con:
+            if getattr(body, 'attachment_mail_id', None):
+                attachment_source(con, body.attachment_mail_id, body.attachment_version, current)
+                payload['attachment_mail_id'] = body.attachment_mail_id
+                payload['attachment_version'] = body.attachment_version
             con.execute('INSERT INTO ai_command_jobs(id,user_id,prompt,payload,created_at,expires) VALUES(?,?,?,?,?,?)',
                 (identifier, current['id'], body.prompt, json.dumps(payload, ensure_ascii=False), now(), time.time() + 3600))
         return {'id': identifier, 'action': 'message', **{key: payload[key] for key in ('subject', 'message', 'recipients', 'explanation')}}
+
+    def attachment_source(con, mail_id, version, current):
+        row = con.execute('SELECT * FROM client_mail WHERE id=? AND user_id=?', (mail_id, current['id'])).fetchone()
+        if not row: raise HTTPException(404, 'Nie znaleziono szkicu z załącznikami.')
+        if row['folder'] != 'drafts' or row['version'] != version:
+            raise HTTPException(409, 'Załączniki zmieniły się. Przygotuj wiadomość ponownie.')
+        return row
 
     @app.get('/api/messages/contacts')
     def message_contacts(source: Literal['both', 'users', 'dictionaries', 'history'] = 'both', dictionary_id: str | None = None, current=Depends(user)):
@@ -251,12 +266,17 @@ def install(app, db, user, now):
     def execute(identifier: str, body: ExecuteInput, current=Depends(user)):
         if not body.subject.strip() or not body.message.strip(): raise HTTPException(422, 'Uzupełnij temat i wiadomość.')
         configs = {}
+        attachment_row = None
+        attachment_parts = []
         with db() as con:
             con.begin_write()
             job = owned(con, identifier, current)
             if job['status'] != 'draft': raise HTTPException(409, 'To polecenie już uruchomiono. Sprawdź historię wysyłki.')
             if job['expires'] < time.time(): raise HTTPException(409, 'Podgląd wygasł. Przygotuj polecenie ponownie.')
             payload = json.loads(job['payload'])
+            if payload.get('attachment_mail_id'):
+                attachment_row = attachment_source(con, payload['attachment_mail_id'], payload['attachment_version'], current)
+                attachment_parts = mail_compose.outgoing(con, attachment_row)
             chosen = set(body.recipients)
             recipients = {item['id']: item for item in payload['recipients']}
             if chosen - set(recipients): raise HTTPException(422, 'Wybrano odbiorcę spoza podglądu.')
@@ -285,7 +305,18 @@ def install(app, db, user, now):
                         if not active: raise HTTPException(409, 'Konto odbiorcy jest nieaktywne.')
                         con.execute('INSERT INTO user_messages(id,sender_id,recipient_id,subject,message,created_at) VALUES(?,?,?,?,?,?)',
                             (secrets.token_hex(16), current['id'], item['address'], payload['subject'], payload['message'], now()))
-                elif item['channel'] == 'email': mailer.send_message(configs['email'], item['address'], configs['email_name'], payload['subject'], payload['message'])
+                elif item['channel'] == 'email':
+                    if attachment_parts:
+                        mailer.send_message(configs['email'], item['address'], configs['email_name'], payload['subject'], payload['message'], attachments=attachment_parts)
+                        with db() as con:
+                            mail_id = secrets.token_hex(16)
+                            con.execute('''INSERT INTO client_mail(id,user_id,sender_name,sender_email,recipient,subject,content,folder,created_at,
+                                zip_enabled,zip_name,zip_password_secret) VALUES(?,?,?,?,?,?,?,'sent',?,?,?,?)''',
+                                (mail_id, current['id'], configs['email_name'], configs['email']['sender'], item['address'],
+                                 payload['subject'], payload['message'], now(), attachment_row['zip_enabled'],
+                                 attachment_row['zip_name'], attachment_row['zip_password_secret']))
+                            mail_compose.store(con, mail_id, attachment_parts)
+                    else: mailer.send_message(configs['email'], item['address'], configs['email_name'], payload['subject'], payload['message'])
                 else: sms.send_text(configs['sms'], item['address'], payload['message'])
                 item['status'] = 'sent'; item['sent_at'] = now()
             except HTTPException as exc: item['status'] = 'failed'; item['reason'] = str(exc.detail)

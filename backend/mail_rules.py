@@ -96,6 +96,29 @@ def normalized_text(value):
     return re.sub(r'\s+', ' ', ''.join(c for c in value if not unicodedata.combining(c))).strip()
 
 
+def bank_impersonation_reason(sender_email, sender_name, subject):
+    """Flag a claimed bank identity on an unrelated sender domain.
+
+    Domain matching is only a mismatch check, never proof of authenticity.
+    A mention in ordinary correspondence or the body alone is insufficient.
+    """
+    brand = r'\b(?:ipko|pko(?:\s+bp)?|pko\s+bank\s+polski)\b'
+    claimed_sender = re.search(brand, normalized_text(sender_name))
+    subject = normalized_text(subject)
+    bank_action = re.search(brand, subject) and re.search(
+        r'\b(?:zaktualizuj|aktualizacj\w*|zweryfikuj|weryfikacj\w*|'
+        r'potwierdz|zablokowan\w*|zawieszon\w*|wymagane|piln\w*)\b', subject)
+    if not (claimed_sender or bank_action):
+        return ''
+    domain = parseaddr(sender_email or '')[1].rsplit('@', 1)[-1].casefold().rstrip('.')
+    if any(domain == allowed or domain.endswith('.' + allowed)
+           for allowed in ('pkobp.pl', 'ipko.pl', 'inteligo.pl')):
+        return ''
+    return ('Podejrzenie phishingu: wiadomość podaje się za PKO / iPKO, '
+            f'ale domena nadawcy ({domain or "brak domeny"}) nie odpowiada domenom banku. '
+            'Nie klikaj linków, nie otwieraj załączników i nie podawaj danych logowania.')
+
+
 def phishing_reason(subject, content):
     """Detect combined account/payment lures; never trust or block a TLD alone."""
     subject = normalized_text(subject)

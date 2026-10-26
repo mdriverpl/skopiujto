@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
 from backend import storage, access, admin, images, mailing, workflow, richtext, ai, document_fields, ai_files, saved_data, tasks, dictionaries, dictionary_excel, ai_commands, surveys, audit
 from backend import database, api_tokens, assistant, notes, flows, client_mail, mail_settings, mail_daily, edelivery, edelivery_connection, companies, impersonation
-from backend import message_center, webpush
+from backend import message_center, webpush, folder_archive, external_shares
 from backend.pricing_offer import router as pricing_router
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +84,7 @@ def initialize():
         c.executescript(ai_commands.SCHEMA)
         c.executescript(message_center.SCHEMA)
         c.executescript(webpush.SCHEMA)
+        c.executescript(external_shares.SCHEMA)
         c.executescript(surveys.SCHEMA)
         if 'scoring_profile' not in c.columns('surveys'):
             c.execute("ALTER TABLE surveys ADD COLUMN scoring_profile TEXT NOT NULL DEFAULT ''")
@@ -161,7 +162,7 @@ async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
-    if request.url.path.startswith(('/api','/share','/accept')):
+    if request.url.path.startswith(('/api','/share','/accept','/public-share')):
         response.headers['Cache-Control'] = 'no-store'
     return response
 
@@ -375,6 +376,7 @@ def folders(current=Depends(user)):
         visible = set()
         for folder in all_folders.values():
             folder['permissions'] = access.permissions(c,current,folder['id'],folder['user_id'])
+            folder['can_share'] = external_shares.can_manage(c, current, folder, 'folder')
             if folder['permissions']['read']:
                 ancestor = folder
                 while ancestor and ancestor['id'] not in visible:
@@ -478,6 +480,7 @@ def documents(current=Depends(user)):
         for row in rows:
             item=dict(row)
             item['permissions'] = access.document_permissions(c,current,row)
+            item['can_share'] = external_shares.can_manage(c, current, row, 'document')
             if not item['permissions']['read']:
                 continue
             item['comment_count']=c.execute('SELECT count(*) FROM comments WHERE document_id=?',(row['id'],)).fetchone()[0]
@@ -533,6 +536,7 @@ def get_document(doc_id: str, current=Depends(user)):
         row = owned(c,doc_id,current)
         result=document(row)
         result['permissions'] = access.document_permissions(c,current,row)
+        result['can_share'] = external_shares.can_manage(c, current, row, 'document')
         result['comments']=[dict(r) for r in c.execute('SELECT * FROM comments WHERE document_id=? ORDER BY created_at',(doc_id,))]
         result['deadlines']=[dict(r) for r in c.execute('SELECT * FROM deadlines WHERE document_id=? ORDER BY due_at',(doc_id,))]
         result['shares']=[dict(r) for r in c.execute('SELECT id,expires,revoked,created_at FROM shares WHERE document_id=? ORDER BY created_at DESC',(doc_id,))]
@@ -685,6 +689,17 @@ def file_response(row, preview=False):
 def download_file(doc_id: str,current=Depends(user)):
     with db() as c:
         return file_response(owned(c,doc_id,current))
+
+@app.get('/api/folders/{folder_id}/archive')
+def download_folder_archive(folder_id: str, current=Depends(user)):
+    from urllib.parse import quote
+    from starlette.background import BackgroundTask
+    with db() as c:
+        folder = owned_folder(c, folder_id, current)
+        output = folder_archive.build(c, folder, current, document)
+    return StreamingResponse(folder_archive.chunks(output), media_type='application/zip', headers={
+        'Content-Disposition': "attachment; filename*=UTF-8''" + quote(folder_archive.safe_name(folder['name']) + '.zip', safe=''),
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'}, background=BackgroundTask(output.close))
 
 @app.get('/api/documents/{doc_id}/preview')
 def preview_file(doc_id: str,current=Depends(user)):
@@ -962,7 +977,7 @@ notes.install(app, db, user, now)
 flows.install(app, db, user, now)
 edelivery_connection.install(app, db, user, now)
 edelivery.install(app, db, user, now)
-client_mail.install(app, db, user, now)
+client_mail.install(app, db, user, now, owned_document=owned)
 mail_daily.install(app, db, user, now)
 mail_settings.install(app, db, user)
 surveys.install(app, db, user, now)
@@ -970,6 +985,7 @@ audit.install(app, db, user)
 tasks.install(app, db, user, owned, now)
 mailing.install(app, db, user, owned, file_response, image_bytes, now, digest)
 webpush.install(app, db, user)
+external_shares.install(app, db, user, now, document, file_response)
 
 # A built Vue frontend is served by Python from the same origin.
 if (ROOT / 'dist' / 'assets').exists():

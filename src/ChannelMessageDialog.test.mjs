@@ -1,3 +1,4 @@
+import { attachmentSelection, hasAttachmentChanges, saveAttachmentSelection, downloadMailArchive } from './composeAttachments.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -9,7 +10,7 @@ const compiled = compileScript(parse(readFileSync(new URL('./ChannelMessageDialo
 const contacts = [{ id: 'u:employee', name: 'Anna', source: 'Users', channels: { user: 'employee' } },
   { id: 'd:contact', name: 'Client', source: 'Clients', channels: { sms: '+48600123456', email: 'client@example.com' } }]
 function dialog(api, channel = 'user', overrides = {}) {
-  const mounted = [], events = [], context = { URLSearchParams, computed, ref, onMounted: callback => mounted.push(callback), MessageChannelTabs: {} }
+  const mounted = [], events = [], context = { attachmentSelection, hasAttachmentChanges, saveAttachmentSelection, downloadMailArchive, FormData, ComposeAttachments: {}, URLSearchParams, computed, ref, onMounted: callback => mounted.push(callback), MessageChannelTabs: {} }
   runInNewContext(compiled, context)
   const state = context.component.setup({ api, channel, initialSubject: 'Meeting', initialContent: 'Tomorrow at 10', ...overrides },
     { expose() {}, emit: (...args) => events.push(args) })
@@ -38,6 +39,29 @@ test('portal selects only users and sends reviewed content through existing manu
   const executed = calls.find(call => call.path.endsWith('/execute'))
   assert.equal(executed.body.confirmed, true)
   assert.equal(executed.body.message, 'Tomorrow at 10')
+  assert.equal(events.at(-1)[0], 'sent')
+})
+
+test('group email snapshots computer and drive attachments before preparing delivery', async () => {
+  const calls = [], base = api(calls)
+  const transport = async (path, method, body) => {
+    if (path === '/client-mail/drafts') return { id: 'attachments', version: 1, attachments: [], ...body }
+    if (path.endsWith('/attachments')) {
+      assert.equal(body.get('files').name, 'local.txt')
+      assert.deepEqual(JSON.parse(body.get('drive_ids')), ['drive-file'])
+      assert.equal(body.get('zip_password'), 'Saved-secret!')
+      return { id: 'attachments', version: 2, attachments: [{ id: 'a', name: 'local.txt' }],
+        zip_enabled: 1, zip_name: 'files.zip', zip_password: 'Saved-secret!' }
+    }
+    return base(path, method, body)
+  }
+  const { state, mount, events } = dialog(transport, 'email')
+  await mount(); state.selected.value = ['d:contact']
+  state.composeFiles.value = { ...attachmentSelection(), files: [new File(['local'], 'local.txt')],
+    drive: [{ id: 'drive-file' }], zip_enabled: true, zip_name: 'files.zip', zip_password: 'Saved-secret!' }
+  await state.send()
+  assert.equal(calls.find(call => call.path === '/messages/prepare').body.attachment_mail_id, 'attachments')
+  assert.equal(calls.find(call => call.path === '/messages/prepare').body.attachment_version, 2)
   assert.equal(events.at(-1)[0], 'sent')
 })
 

@@ -12,3 +12,12 @@ test('company status requires an actual assignment and unrelated letters cannot 
   assert.equal(mailSenderKind({ company: { id: 'company' }, safe: true }), 'company')
   assert.equal(mailSenderKind({ folder: 'spam', category: 'spam' }), 'spam')
 })
+
+test('bank impersonation takes precedence over a company assignment and category', () => {
+  const message = { sender_name: 'iPKO biznes', sender_email: 'webmaster@72c9eed974.nxcli.io',
+    folder: 'inbox', company: { id: 'bank' }, safe: true,
+    phishing_warning: 'Podejrzenie phishingu: domena nadawcy nie odpowiada domenom banku.' }
+  assert.equal(mailSenderKind(message), 'phishing')
+  assert.equal(mailSenderKind({ ...message, folder: 'sent' }), 'sent')
+  assert.equal(mailSenderKind({ ...message, folder: 'drafts' }), 'draft')
+})
