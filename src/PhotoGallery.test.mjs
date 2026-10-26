@@ -16,7 +16,7 @@ function gallery() {
   const context = { computed, nextTick, reactive, ref, watch, document, setInterval, clearInterval, URLSearchParams,
     onBeforeUnmount: callback => cleanup.push(callback) }
   for (const icon of ['Images', 'Grid3X3', 'List', 'ChevronLeft', 'ChevronRight', 'X', 'Download', 'ZoomIn', 'ZoomOut',
-    'Maximize', 'Minimize', 'Play', 'Pause', 'PanelBottom', 'RotateCcw', 'ImageOff', 'MapPin', 'ExternalLink', 'Heart', 'MessageSquare', 'Share2', 'PhotoActivity', 'PhotoLike']) context[icon] = {}
+    'Maximize', 'Minimize', 'Play', 'Pause', 'PanelBottom', 'RotateCcw', 'ImageOff', 'MapPin', 'ExternalLink', 'Heart', 'MessageSquare', 'Share2', 'Info', 'PhotoActivity', 'PhotoLike', 'PhotoMetadata']) context[icon] = {}
   runInNewContext(source, context)
   const props = reactive({ images: images.map(image => ({ ...image })), showGrid: true })
   const state = context.component.setup(props, { expose() {}, emit() {} })
@@ -49,6 +49,18 @@ test('zoom resets between images and selecting the current thumbnail does not le
   state.changeZoom(1); state.shift(1)
   assert.equal(state.zoom.value, 1)
   assert.equal(state.pan.value.x, 0)
+  unmount()
+})
+
+test('metadata opens with the photo and a successful retry restores the map for the same file only', async () => {
+  const { state, unmount } = gallery()
+  await state.open('1'); assert.equal(state.showMetadata.value, true)
+  state.metadataLoaded({ id: '2', location: { latitude: 1, longitude: 2 } })
+  assert.equal(state.location.value, null)
+  state.metadataLoaded({ id: '1', location: { latitude: 0, longitude: 0 } })
+  state.openMap(); assert.equal(state.showMap.value, true); assert.equal(state.showMetadata.value, false)
+  state.toggleMetadata(); assert.equal(state.showMetadata.value, true); assert.equal(state.showMap.value, false)
+  state.toggleActivity(); assert.equal(state.showMetadata.value, false)
   unmount()
 })
 

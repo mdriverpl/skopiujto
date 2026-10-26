@@ -224,6 +224,18 @@ def install(app, db, user, now, serialize_document, file_response, image_bytes):
             return Response(document_pdf.render_pdf(serialize_document(row)), media_type='application/pdf', headers={
                 'Content-Disposition': "attachment; filename*=UTF-8''" + quote(folder_archive.safe_name(row['title']) + '.pdf', safe='')})
 
+    @app.get('/api/public-shares/{token}/documents/{document_id}/metadata')
+    def photo_metadata(token: str, document_id: str):
+        with db() as con:
+            row = public_document(con, token, document_id)
+            if not info(row)['image']: raise HTTPException(415, 'Ten plik nie jest zdjęciem.')
+        result = images.public_metadata(image_bytes(row))
+        with db() as con:
+            latest = public_document(con, token, document_id)
+            if latest['version'] != row['version']:
+                raise HTTPException(409, 'Zdjęcie zmieniło się. Otwórz je ponownie.')
+        return result
+
     @app.get('/api/public-shares/{token}/documents/{document_id}/location')
     def photo_location(token: str, document_id: str):
         with db() as con:

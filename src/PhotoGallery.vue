@@ -1,13 +1,17 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { Images, Grid3X3, List, ChevronLeft, ChevronRight, X, Download, ZoomIn, ZoomOut, Maximize, Minimize, Play, Pause, PanelBottom, RotateCcw, ImageOff, MapPin, ExternalLink, Heart, MessageSquare, Share2 } from 'lucide-vue-next'
+import { Images, Grid3X3, List, ChevronLeft, ChevronRight, X, Download, ZoomIn, ZoomOut, Maximize, Minimize, Play, Pause, PanelBottom, RotateCcw, ImageOff, MapPin, ExternalLink, Heart, MessageSquare, Share2, Info } from 'lucide-vue-next'
 import PhotoActivity from './PhotoActivity.vue'
 import PhotoLike from './PhotoLike.vue'
-const props = defineProps({ images: { type: Array, default: () => [] }, showGrid: Boolean, loadLocation: Function, api: Function, token: String, canEdit: Boolean })
+import PhotoMetadata from './PhotoMetadata.vue'
+const props = defineProps({ images: { type: Array, default: () => [] }, showGrid: Boolean, loadLocation: Function, loadMetadata: Function, api: Function, token: String, canEdit: Boolean })
 const emit = defineEmits(['caption-saved', 'activity-updated', 'share'])
+const showMetadata = ref(false)
+function toggleMetadata() { showMetadata.value = !showMetadata.value; showActivity.value = false; showMap.value = false; stop() }
+function openMap() { if (location.value) { showMap.value = true; showMetadata.value = false; showActivity.value = false; stop() } }
 const activity = ref(null), showActivity = ref(false), activityState = ref({ loading: true })
 function updateActivity(state) { if (state.id === activeId.value) { activityState.value = state; emit('activity-updated', state) } }
-function toggleActivity() { showActivity.value = !showActivity.value; showMap.value = false; stop() }
+function toggleActivity() { showActivity.value = !showActivity.value; showMap.value = false; showMetadata.value = false; stop() }
 function preference(key, allowed, fallback) {
   try { const value = globalThis.localStorage?.getItem(key); return allowed.includes(value) ? value : fallback } catch { return fallback }
 }
@@ -31,6 +35,17 @@ const mapSource = computed(() => {
   return 'https://www.openstreetmap.org/export/embed.html?' + new URLSearchParams({ bbox: bbox.join(','), layer: 'mapnik', marker: `${lat},${lon}` })
 })
 const mapLink = computed(() => location.value ? `https://www.openstreetmap.org/?mlat=${location.value.latitude}&mlon=${location.value.longitude}#map=15/${location.value.latitude}/${location.value.longitude}` : '')
+function validLocation(point) {
+  return point && typeof point.latitude === 'number' && typeof point.longitude === 'number' &&
+    Number.isFinite(point.latitude) && Number.isFinite(point.longitude) &&
+    Math.abs(point.latitude) <= 90 && Math.abs(point.longitude) <= 180 ? point : null
+}
+function metadataLoaded(result) {
+  if (result.id !== active.value?.id || result.version !== active.value?.version) return
+  locationRequest++
+  location.value = validLocation(result.location)
+  locations.set(`${result.id}:${result.version ?? ''}`, location.value)
+}
 async function readLocation(image) {
   const current = ++locationRequest
   location.value = null
@@ -40,10 +55,7 @@ async function readLocation(image) {
     let value = locations.get(key)
     if (!locations.has(key)) {
       const response = await props.loadLocation(image)
-      const point = response?.location
-      value = point && typeof point.latitude === 'number' && typeof point.longitude === 'number' &&
-        Number.isFinite(point.latitude) && Number.isFinite(point.longitude) &&
-        Math.abs(point.latitude) <= 90 && Math.abs(point.longitude) <= 180 ? point : null
+      value = validLocation(response?.location)
       locations.set(key, value)
     }
     if (current === locationRequest && activeId.value === image.id) location.value = value
@@ -77,12 +89,13 @@ async function open(id, trigger = null) {
     document.addEventListener('fullscreenchange', syncFullscreen)
     document.addEventListener('visibilitychange', visibilityChanged)
   }
+  showMetadata.value = true; showActivity.value = false; showMap.value = false
   select(id)
   await nextTick(); dialog.value?.focus()
 }
 function restore() {
   stop()
-  locationRequest++; location.value = null; showMap.value = false; showActivity.value = false
+  locationRequest++; location.value = null; showMap.value = false; showActivity.value = false; showMetadata.value = false
   if (!locked) return
   document.body.style.overflow = previousOverflow; locked = false
   document.removeEventListener('fullscreenchange', syncFullscreen)
@@ -173,8 +186,8 @@ defineExpose({ open, close })
   </section>
   <Teleport to="body">
     <div v-if="active" ref="dialog" class="photo-lightbox" role="dialog" aria-modal="true" aria-labelledby="lightbox-title" tabindex="-1" @keydown.stop="onKeydown">
-      <header class="lightbox-header"><div class="lightbox-heading"><span class="lightbox-counter" aria-live="polite">{{ activeIndex + 1 }} / {{ images.length }}</span><div><h2 id="lightbox-title">{{ active.title }}</h2><small>{{ active.filename }}</small></div></div><div class="lightbox-tools"><button :disabled="images.length < 2" :aria-label="playing ? 'Zatrzymaj pokaz slajdów' : 'Uruchom pokaz slajdów'" :title="playing ? 'Zatrzymaj pokaz' : 'Pokaz slajdów'" :aria-pressed="playing" @click="togglePlay"><Pause v-if="playing" :size="20" /><Play v-else :size="20" /></button><button :disabled="zoom <= 1 || imageError" aria-label="Pomniejsz zdjęcie" title="Pomniejsz (-)" @click="changeZoom(-1)"><ZoomOut :size="20" /></button><button :disabled="zoom >= 3 || imageError" aria-label="Powiększ zdjęcie" title="Powiększ (+)" @click="changeZoom(1)"><ZoomIn :size="20" /></button><button class="lightbox-fit" aria-label="Dopasuj zdjęcie" title="Dopasuj do ekranu" @click="fit">{{ Math.round(zoom * 100) }}%</button><button :aria-pressed="showThumbnails" aria-label="Pokaż lub ukryj miniatury" title="Miniatury" @click="showThumbnails = !showThumbnails; revealThumbnail()"><PanelBottom :size="20" /></button><button :aria-label="fullscreen ? 'Wyłącz pełny ekran' : 'Włącz pełny ekran'" title="Pełny ekran" @click="toggleFullscreen"><Minimize v-if="fullscreen" :size="20" /><Maximize v-else :size="20" /></button><button v-if="location" class="lightbox-map-toggle" :aria-pressed="showMap" aria-label="Pokaż lub ukryj mapę zdjęcia" title="Lokalizacja GPS zdjęcia" @click="showMap = !showMap; showActivity = false; stop()"><MapPin :size="19" /><span>Mapa</span></button><button v-if="api && token" class="lightbox-like" :aria-pressed="!!activityState.liked" :disabled="activityState.loading || activityState.busy" aria-label="Polub zdjęcie" title="Lubię to" @click="activity?.toggleLike()"><Heart :size="19" :fill="activityState.liked ? 'currentColor' : 'none'" />{{ activityState.likes_count || 0 }}</button><button v-if="api && token" :aria-pressed="showActivity" aria-label="Opis i komentarze" title="Opis i komentarze" @click="toggleActivity"><MessageSquare :size="19" />{{ activityState.comments_count || 0 }}</button><button v-if="token" aria-label="Udostępnij zdjęcie" title="Udostępnij zdjęcie" @click="stop(); emit('share', active)"><Share2 :size="20" /></button><a :href="active.download" aria-label="Pobierz zdjęcie" title="Pobierz zdjęcie"><Download :size="20" /></a><button class="lightbox-close" aria-label="Zamknij podgląd zdjęć" title="Zamknij (Esc)" @click="close"><X :size="23" /></button></div></header>
-      <div class="lightbox-main" :class="{ 'side-panel-open': showActivity || location && showMap }"><div class="lightbox-picture"><button class="lightbox-arrow previous" :disabled="images.length < 2" aria-label="Poprzednie zdjęcie" title="Poprzednie zdjęcie (←)" @click="shift(-1)"><ChevronLeft :size="32" /></button>
+      <header class="lightbox-header"><div class="lightbox-heading"><span class="lightbox-counter" aria-live="polite">{{ activeIndex + 1 }} / {{ images.length }}</span><div><h2 id="lightbox-title">{{ active.title }}</h2><small>{{ active.filename }}</small></div></div><div class="lightbox-tools"><button :disabled="images.length < 2" :aria-label="playing ? 'Zatrzymaj pokaz slajdów' : 'Uruchom pokaz slajdów'" :title="playing ? 'Zatrzymaj pokaz' : 'Pokaz slajdów'" :aria-pressed="playing" @click="togglePlay"><Pause v-if="playing" :size="20" /><Play v-else :size="20" /></button><button :disabled="zoom <= 1 || imageError" aria-label="Pomniejsz zdjęcie" title="Pomniejsz (-)" @click="changeZoom(-1)"><ZoomOut :size="20" /></button><button :disabled="zoom >= 3 || imageError" aria-label="Powiększ zdjęcie" title="Powiększ (+)" @click="changeZoom(1)"><ZoomIn :size="20" /></button><button class="lightbox-fit" aria-label="Dopasuj zdjęcie" title="Dopasuj do ekranu" @click="fit">{{ Math.round(zoom * 100) }}%</button><button :aria-pressed="showThumbnails" aria-label="Pokaż lub ukryj miniatury" title="Miniatury" @click="showThumbnails = !showThumbnails; revealThumbnail()"><PanelBottom :size="20" /></button><button :aria-label="fullscreen ? 'Wyłącz pełny ekran' : 'Włącz pełny ekran'" title="Pełny ekran" @click="toggleFullscreen"><Minimize v-if="fullscreen" :size="20" /><Maximize v-else :size="20" /></button><button :aria-pressed="showMetadata" aria-label="Pokaż lub ukryj metadane zdjęcia" title="Metadane zdjęcia" @click="toggleMetadata"><Info :size="20" /></button><button v-if="location" class="lightbox-map-toggle" :aria-pressed="showMap" aria-label="Pokaż lub ukryj mapę zdjęcia" title="Lokalizacja GPS zdjęcia" @click="showMap = !showMap; showActivity = false; showMetadata = false; stop()"><MapPin :size="19" /><span>Mapa</span></button><button v-if="api && token" class="lightbox-like" :aria-pressed="!!activityState.liked" :disabled="activityState.loading || activityState.busy" aria-label="Polub zdjęcie" title="Lubię to" @click="activity?.toggleLike()"><Heart :size="19" :fill="activityState.liked ? 'currentColor' : 'none'" />{{ activityState.likes_count || 0 }}</button><button v-if="api && token" :aria-pressed="showActivity" aria-label="Opis i komentarze" title="Opis i komentarze" @click="toggleActivity"><MessageSquare :size="19" />{{ activityState.comments_count || 0 }}</button><button v-if="token" aria-label="Udostępnij zdjęcie" title="Udostępnij zdjęcie" @click="stop(); emit('share', active)"><Share2 :size="20" /></button><a :href="active.download" aria-label="Pobierz zdjęcie" title="Pobierz zdjęcie"><Download :size="20" /></a><button class="lightbox-close" aria-label="Zamknij podgląd zdjęć" title="Zamknij (Esc)" @click="close"><X :size="23" /></button></div></header>
+      <div class="lightbox-main" :class="{ 'side-panel-open': showMetadata || showActivity || location && showMap }"><div class="lightbox-picture"><button class="lightbox-arrow previous" :disabled="images.length < 2" aria-label="Poprzednie zdjęcie" title="Poprzednie zdjęcie (←)" @click="shift(-1)"><ChevronLeft :size="32" /></button>
         <div class="lightbox-stage" :class="{ zoomed: zoom > 1 }" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="pointer = null" @dblclick="zoom === 1 ? changeZoom(1) : fit()">
           <p v-if="imageLoading && !imageError" class="lightbox-loading" role="status">Wczytywanie zdjęcia…</p>
           <div v-if="imageError" class="lightbox-image-error" role="alert"><ImageOff :size="38" /><strong>Nie udało się wczytać zdjęcia</strong><span>Link mógł wygasnąć albo plik jest niedostępny.</span><button @click.stop="retryImage"><RotateCcw :size="16" />Spróbuj ponownie</button></div>
@@ -183,6 +196,7 @@ defineExpose({ open, close })
         <button class="lightbox-arrow next" :disabled="images.length < 2" aria-label="Następne zdjęcie" title="Następne zdjęcie (→)" @click="shift(1)"><ChevronRight :size="32" /></button>
       </div>
         <aside v-if="location && showMap" class="lightbox-map" aria-label="Lokalizacja zdjęcia"><header><strong><MapPin :size="17" />Miejsce wykonania</strong><button aria-label="Ukryj mapę" @click="showMap = false"><X :size="18" /></button></header><iframe :key="active.id" :src="mapSource" title="Mapa lokalizacji zdjęcia" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-popups" loading="lazy"></iframe><span class="lightbox-coordinates">{{ location.latitude.toFixed(6) }}, {{ location.longitude.toFixed(6) }}</span><small>Współrzędne GPS zapisane w zdjęciu.</small><a :href="mapLink" target="_blank" rel="noopener noreferrer"><ExternalLink :size="15" />Otwórz większą mapę</a></aside>
+        <PhotoMetadata v-if="showMetadata" :key="`${active.id}:${active.version}`" :photo="active" :load="loadMetadata" @loaded="metadataLoaded" @close="showMetadata = false" @map="openMap" />
         <PhotoActivity v-if="api && token" v-show="showActivity" :key="active.id" ref="activity" :api="api" :token="token" :photo="active" :can-edit="canEdit" @state="updateActivity" @caption-saved="emit('caption-saved', $event)" @close="showActivity = false" />
       </div>
       <footer class="lightbox-footer"><p v-if="active.description" class="lightbox-description">{{ active.description }}</p><p class="lightbox-hint">{{ zoom > 1 ? 'Przeciągnij zdjęcie, aby przesunąć podgląd.' : 'Przewijaj strzałkami lub przesuń zdjęcie palcem.' }}</p><div v-if="showThumbnails" ref="strip" class="lightbox-thumbnails" aria-label="Miniatury zdjęć"><button v-for="(image, index) in images" :key="image.id" :aria-label="`Pokaż zdjęcie ${index + 1}: ${image.title}`" :aria-current="activeId === image.id ? 'true' : undefined" @click="select(image.id)"><img :src="image.src" :alt="image.title" loading="lazy" /><span>{{ index + 1 }}</span></button></div></footer>

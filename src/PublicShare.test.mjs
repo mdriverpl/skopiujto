@@ -20,6 +20,17 @@ function page(api, search = '') {
 const root = { kind: 'folder', title: 'Gallery', folder_id: 'child', files: [{ id: 'one', image: true, title: 'Photo' }],
   view_mode: 'gallery', link_id: 'link', can_add_photos: true, allow_uploads: false }
 
+test('GPS and metadata share a single request per file version and failed requests can retry', async () => {
+  let calls = 0, fail = true
+  const { state } = page(async () => { calls++; if (fail) throw new Error('Offline'); return { width: 12, location: { latitude: 1, longitude: 2 } } })
+  const photo = { id: 'one', version: 1 }
+  await assert.rejects(state.photoMetadata(photo), /Offline/)
+  fail = false
+  const [metadata, point] = await Promise.all([state.photoMetadata(photo), state.photoLocation(photo)])
+  assert.equal(calls, 2); assert.equal(metadata.width, 12); assert.equal(point.location.latitude, 1)
+  await state.photoMetadata({ ...photo, version: 2 }); assert.equal(calls, 3)
+})
+
 test('deep links load the scoped folder before opening the selected photo', async () => {
   const paths = [], opened = []
   const { state, mount } = page(async path => { paths.push(path); return path.endsWith('/permissions') ? { can_edit: false } : { ...root } }, '?folder=child&photo=one')

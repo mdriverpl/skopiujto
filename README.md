@@ -77,6 +77,14 @@ Jeżeli plik ma poprawne współrzędne GPS w EXIF, przy zdjęciu pojawia się p
 do większej mapy. Zdjęcia bez GPS nie pokazują mapy. Odczyt lokalizacji wymaga
 aktywnego linku do tego samego zdjęcia; inne dane EXIF nie są udostępniane przez to API.
 
+Po otwarciu zdjęcia po prawej stronie pojawia się panel **Metadane zdjęcia**.
+Pokazuje nazwę i rozmiar pliku, format, wymiary po uwzględnieniu orientacji oraz
+dostępne informacje fotograficzne EXIF: aparat, obiektyw, datę, ISO, przysłonę,
+czas naświetlania i ogniskową. Panel ma też współrzędne GPS i przycisk mapy,
+gdy są zapisane w zdjęciu. Ikona informacji pozwala ukryć lub ponownie otworzyć
+panel; komentarze i mapa korzystają z tego samego miejsca obok zdjęcia.
+Na telefonie panel przechodzi pod zdjęcie i można go przewijać.
+
 Panel **Opis i komentarze** pozwala właścicielowi zdjęcia zmienić nazwę w galerii
 i krótki opis (do 500 znaków). Zmiany nie zastępują oryginalnego pliku ani jego wersji.
 Odbiorcy linku mogą polubić zdjęcie i komentować je pod wybranym podpisem bez logowania.

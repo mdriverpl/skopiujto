@@ -28,7 +28,13 @@ function updatePhoto(photo) {
 const photos = computed(() => files.value.filter(file => file.image).map(file => ({ ...file, src: url(file, 'preview'), download: url(file, 'file') })))
 const otherFiles = computed(() => resource.value?.view_mode === 'gallery' ? files.value.filter(file => !file.image) : files.value)
 const url = (file, action) => `/api${base.value}/documents/${encodeURIComponent(file.id)}/${action}`
-const photoLocation = image => props.api(`${base.value}/documents/${encodeURIComponent(image.id)}/location`)
+const metadataRequests = new Map()
+function photoMetadata(image) {
+  const key = `${image.id}:${image.version ?? ''}`
+  if (!metadataRequests.has(key)) metadataRequests.set(key, props.api(`${base.value}/documents/${encodeURIComponent(image.id)}/metadata`).catch(error => { metadataRequests.delete(key); throw error }))
+  return metadataRequests.get(key)
+}
+const photoLocation = image => photoMetadata(image).then(result => ({ location: result.location }))
 const size = bytes => bytes == null ? 'Dokument' : bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`
 const date = stamp => new Date(stamp * 1000).toLocaleDateString('pl-PL')
 async function load(folderId = null) {
@@ -68,7 +74,7 @@ onMounted(async () => {
     <template v-if="resource && !error && !loading">
       <nav v-if="resource.kind === 'folder' && resource.breadcrumbs?.length > 1 && !detail" class="public-breadcrumbs" aria-label="Ścieżka udostępnionego katalogu"><template v-for="(folder, index) in resource.breadcrumbs" :key="folder.id"><ChevronRight v-if="index" :size="15" /><button :aria-current="folder.id === resource.folder_id ? 'page' : undefined" @click="load(folder.id)">{{ folder.name }}</button></template></nav>
       <div v-if="!detail && resource.folders?.length" class="public-folder-grid"><button v-for="folder in resource.folders || []" :key="folder.id" class="public-folder" @click="load(folder.id)"><Folder :size="30" /><span><strong>{{ folder.name }}</strong><small>Katalog</small></span><ChevronRight :size="18" /></button></div>
-      <PhotoGallery ref="gallery" :images="photos" :api="api" :token="token" :can-edit="canEdit" @share="shareResource" @caption-saved="updatePhoto" @activity-updated="updatePhoto" :load-location="photoLocation" :show-grid="resource.view_mode === 'gallery' && !detail">
+      <PhotoGallery ref="gallery" :images="photos" :api="api" :token="token" :can-edit="canEdit" @share="shareResource" @caption-saved="updatePhoto" @activity-updated="updatePhoto" :load-location="photoLocation" :load-metadata="photoMetadata" :show-grid="resource.view_mode === 'gallery' && !detail">
         <template #actions><button v-if="canUploadPhotos" class="gallery-action" @click="showUpload = true"><ImagePlus :size="17" />Dodaj zdjęcia</button><a v-if="resource.kind === 'folder'" class="gallery-action" :href="`/api${base}/archive`"><Download :size="17" />Pobierz</a><a v-else class="gallery-action" :href="url(resource.document, 'file')"><Download :size="17" />Pobierz</a><button class="gallery-action" @click="shareResource()"><Share2 :size="17" />Udostępnij</button></template>
       </PhotoGallery>
       <section v-if="detail" class="public-detail" aria-label="Podgląd pliku"><div class="public-detail-toolbar"><button v-if="resource.view_mode !== 'preview' || resource.kind === 'folder'" @click="detail = null"><ArrowLeft :size="16" />Wróć do katalogu</button><a class="public-download" :href="url(detail, 'file')"><Download :size="16" />{{ detail.editor ? 'Pobierz PDF' : 'Pobierz plik' }}</a></div><h2>{{ detail.title }}</h2>

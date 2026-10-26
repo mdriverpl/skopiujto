@@ -2,6 +2,7 @@
 import io
 import math
 import warnings
+from fractions import Fraction
 
 from fastapi import HTTPException
 from PIL import Image, ImageOps, ExifTags, UnidentifiedImageError
@@ -36,6 +37,43 @@ def gps_location(data):
     with open_image(data) as image:
         try: return location_from_gps(image.getexif().get_ifd(34853))
         except (KeyError, TypeError, ValueError, OSError, SyntaxError): return None
+
+
+def public_metadata(data):
+    """Display geometry and photographic EXIF fields for the shared viewer."""
+    with open_image(data) as image:
+        try: exif = image.getexif()
+        except (ValueError, OSError, SyntaxError): exif = {}
+        try: detail = exif.get_ifd(34665) if hasattr(exif, 'get_ifd') else {}
+        except (KeyError, TypeError, ValueError, OSError, SyntaxError): detail = {}
+        values = dict(exif) | detail
+        width, height = image.size
+        if exif.get(274) in (5, 6, 7, 8): width, height = height, width
+        tags = []
+        fields = [(271, 'Producent aparatu'), (272, 'Model aparatu'), (42036, 'Obiektyw'),
+                  (36867, 'Data wykonania'), (36881, 'Przesunięcie strefy czasowej'),
+                  (33434, 'Czas naświetlania'), (33437, 'Przysłona'), (34855, 'ISO'),
+                  (37386, 'Ogniskowa'), (41989, 'Ogniskowa dla formatu 35 mm')]
+        for key, name in fields:
+            value = values.get(key)
+            if value is None or isinstance(value, (bytes, dict, list, tuple)): continue
+            try:
+                if key in (33434, 33437, 37386, 41989, 34855):
+                    number = float(value)
+                    if not math.isfinite(number) or number <= 0: continue
+                    if key == 33434:
+                        fraction = Fraction(number).limit_denominator(1_000_000)
+                        text = f'1/{fraction.denominator} s' if number < 1 and fraction.numerator == 1 else f'{number:g} s'
+                    elif key == 33437: text = f'f/{number:g}'
+                    elif key in (37386, 41989): text = f'{number:g} mm'
+                    else: text = f'{number:g}'
+                else: text = str(value).replace('\x00', '').strip()[:160]
+                if text: tags.append({'name': name, 'value': text})
+            except (TypeError, ValueError, OverflowError, ZeroDivisionError): continue
+        try: location = location_from_gps(exif.get_ifd(34853)) if hasattr(exif, 'get_ifd') else None
+        except (KeyError, TypeError, ValueError, OSError, SyntaxError): location = None
+        return {'width': width, 'height': height, 'format': image.format, 'mode': image.mode,
+                'tags': tags, 'location': location}
 
 class ImageEdit(BaseModel):
     version: int = Field(strict=True, ge=1)
