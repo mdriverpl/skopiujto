@@ -14,10 +14,13 @@ export function normalizeUnifiedMail(items, emails) {
 }
 
 export async function loadUnifiedMail(api) {
-  const [emails, first] = await Promise.all([api('/client-mail'), api('/message-center?direction=incoming&limit=100&offset=0')])
-  const items = [...first.items]
+  const centerPath = '/message-center?direction=incoming&include_native_email=false&limit=100'
+  const [emails, first] = await Promise.all([api('/client-mail?folder=inbox'), api(`${centerPath}&offset=0`)])
+  const items = [...emails.map(email => ({ id: `email:${email.id}`, source: 'email', source_id: email.id,
+    channel: 'email', direction: 'incoming', folder: email.folder, unread: !!email.unread,
+    address: email.sender_email, created_at: email.created_at })), ...first.items]
   for (let offset = 100; offset < first.total; offset += 100) {
-    const page = await api(`/message-center?direction=incoming&limit=100&offset=${offset}`)
+    const page = await api(`${centerPath}&offset=${offset}`)
     items.push(...page.items)
   }
   return normalizeUnifiedMail(items, emails)

@@ -58,7 +58,7 @@ test('loads every page of the unified history without limiting native mail actio
   const calls = []
   const rows = await loadUnifiedMail(async path => {
     calls.push(path)
-    if (path === '/client-mail') return []
+    if (path === '/client-mail?folder=inbox') return []
     const offset = Number(new URL('http://local' + path).searchParams.get('offset'))
     return { total: 205, items: Array.from({ length: Math.min(100, 205 - offset) }, (_, index) => ({
       id: `internal:${offset + index}`, source: 'internal', channel: 'user'
@@ -66,7 +66,20 @@ test('loads every page of the unified history without limiting native mail actio
   })
   assert.equal(rows.length, 205)
   assert.equal(rows.at(-1).id, 'internal:204')
-  assert.equal(calls.includes('/client-mail'), true)
+  assert.equal(calls.includes('/client-mail?folder=inbox'), true)
   assert.equal(calls.some(path => path.includes('offset=200')), true)
   assert.ok(calls.filter(path => path.startsWith('/message-center?')).every(path => new URL('http://local' + path).searchParams.get('direction') === 'incoming'))
+  assert.ok(calls.filter(path => path.startsWith('/message-center?')).every(path => new URL('http://local' + path).searchParams.get('include_native_email') === 'false'))
+})
+
+test('received emails come directly from the inbox without duplicate history entries', async () => {
+  const native = { id: 'mail', folder: 'inbox', unread: true, attachments: [{ id: 'file' }], version: 3 }
+  const rows = await loadUnifiedMail(async path => path === '/client-mail?folder=inbox' ? [native]
+    : { items: [{ id: 'internal:one', source: 'internal', channel: 'user', direction: 'incoming' }], total: 1 })
+  assert.equal(rows.length, 2)
+  assert.equal(rows[0].id, 'mail')
+  assert.equal(rows[0].center.id, 'email:mail')
+  assert.equal(rows[0].center.direction, 'incoming')
+  assert.equal(rows[0].version, 3)
+  assert.equal(rows[0].attachments[0].id, 'file')
 })

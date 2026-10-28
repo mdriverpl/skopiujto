@@ -107,6 +107,33 @@ const driveTargetRights = computed(() => driveDialog.value?.destination ? driveF
 const canSaveToDrive = computed(() => !!driveDialog.value?.chosen.length && driveTargetRights.value?.read && driveTargetRights.value?.add && !driveLoading.value && !driveSaving.value && (!driveDialog.value.createFolder || !!driveDialog.value.newName.trim()))
 const busy = ref(false), error = ref(''), notice = ref(''), settings = ref(null), composer = ref(null), analysis = ref({}), aiBusy = ref(false), importInput = ref(null)
 const spamFeedback = ref(false)
+const swipeMessageId = ref(null)
+let swipeStart = null
+function startMessageSwipe(event, message) {
+  swipeStart = null
+  if (busy.value || readOnly.value || !isEmailMessage(message) || message.folder === 'trash' || event.touches.length !== 1) return
+  const touch = event.touches[0]
+  swipeStart = { id: message.id, x: touch.clientX, y: touch.clientY }
+}
+function endMessageSwipe(event, message) {
+  const start = swipeStart
+  swipeStart = null
+  if (!start || start.id !== message.id || !event.changedTouches.length) return
+  const touch = event.changedTouches[0]
+  const dx = touch.clientX - start.x, dy = touch.clientY - start.y
+  if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return
+  if (event.cancelable) event.preventDefault()
+  swipeMessageId.value = dx < 0 ? message.id : null
+}
+async function deleteMessage(message) {
+  if (busy.value || readOnly.value || !isEmailMessage(message) || message.folder === 'trash') return
+  const removed = await run(() => patch(message, { folder: 'trash' }))
+  if (!removed) return
+  swipeMessageId.value = null
+  selectedId.value = null
+  notice.value = 'Przeniesiono wiadomość do śmieci.'
+  if (!globalThis.matchMedia?.('(max-width:650px)').matches && filtered.value.length) await open(filtered.value[0])
+}
 const folders = [
   { id: 'inbox', label: 'Odebrane', icon: Inbox }, { id: 'sent', label: 'Wysłane', icon: Send },
   { id: 'drafts', label: 'Robocze', icon: FileText }, { id: 'archive', label: 'Archiwum', icon: Archive },
@@ -196,7 +223,11 @@ async function refresh() {
   }
   const result = await props.api('/client-mail/sync', 'POST', { hours: syncHours.value })
   await load()
-  notice.value = `Pobrano wiadomości: ${result.imported}.` + (result.remaining ? ` Pozostało: ${result.remaining}. Odśwież ponownie.` : '') + (result.skipped ? ` Pominięto zbyt duże lub niepoprawne wiadomości: ${result.skipped}.` : '')
+  notice.value = [
+    result.imported ? `Pobrano wiadomości: ${result.imported}.` : '',
+    result.remaining ? `Pozostało: ${result.remaining}. Odśwież ponownie.` : '',
+    result.skipped ? `Pominięto zbyt duże lub niepoprawne wiadomości: ${result.skipped}.` : ''
+  ].filter(Boolean).join(' ')
 }
 async function scanSpam() {
   const result = await props.api(`/client-mail/spam-scan?hours=${syncHours.value}`, 'POST')
@@ -261,7 +292,7 @@ async function spamSender() {
     notice.value = message.blocked ? 'Usunięto adres z listy spamu.' : 'Adres dodano do spamu. Kolejne wiadomości od tego nadawcy trafią do Spamu.'
   })
 }
-function changeFolder(id) { folder.value = id; selectedId.value = null; filter.value = 'all'; categoryFilter.value = ''; emit('folder-change', id) }
+function changeFolder(id) { folder.value = id; selectedId.value = null; swipeMessageId.value = null; filter.value = 'all'; categoryFilter.value = ''; emit('folder-change', id) }
 async function setUnread(message, unread) {
   if (isEmailMessage(message)) return patch(message, { unread })
   const result = await props.api(`/message-center/${encodeURIComponent(message.center.id)}/read-state`, 'PATCH', { unread })
@@ -270,6 +301,7 @@ async function setUnread(message, unread) {
 }
 async function open(message) {
   if (busy.value) return
+  swipeMessageId.value = null
   selectedId.value = message.id
   if (readOnly.value) return
   if (!isEmailMessage(message)) {
@@ -320,7 +352,8 @@ async function send() {
   await run(async () => {
     const draft = await saveDraft()
     const sent = await props.api(`/client-mail/${draft.id}/send`, 'POST', { version: draft.version })
-    replace(sent); composer.value = null; notice.value = 'Serwer SMTP przyjął wiadomość do wysłania.'; changeFolder('sent'); selectedId.value = sent.id
+    replace(sent); composer.value = null; notice.value = 'Serwer SMTP przyjął wiadomość do wysłania.'
+    if (selectedId.value === sent.id) selectedId.value = null
   })
 }
 async function importMail(event) {
@@ -419,9 +452,10 @@ onMounted(async () => { await run(async () => { if (readOnly.value) { await load
         <div class="mail-time-range" role="group" aria-label="Zakres pobierania i listy wiadomości"><button v-if="unified" :aria-pressed="unifiedHours === null" @click="showAllTime">Wszystkie</button><span v-else>Ostatnie</span><button v-for="range in timeRanges" :key="range.hours" :disabled="busy" :aria-pressed="unified ? unifiedHours === range.hours : syncHours === range.hours" :title="`Pobierz i pokaż wiadomości z ostatnich ${range.label}`" @click="changeTimeRange(range.hours)">{{ range.label }}</button><span class="mail-new-count" role="status" :aria-label="`Nowe nieprzeczytane wiadomości: ${unread}`" title="Nowe nieprzeczytane wiadomości"><Star :size="14" aria-hidden="true" />{{ unread }}</span><RefreshCw v-if="busy" class="mail-range-loading" :size="14" aria-label="Wczytywanie poczty" /></div>
         <input ref="importInput" type="file" accept=".eml" hidden aria-label="Plik wiadomości .eml" @change="importMail" />
         <div class="mail-message-list" :class="{ tiles: grid }" aria-label="Lista wiadomości">
-          <article v-for="message in filtered" :key="message.id" class="mail-row" :class="{ selected: selectedId === message.id, unread: message.unread, 'mail-row-danger': mailSenderKind(message) === 'phishing' }">
+          <article v-for="message in filtered" :key="message.id" class="mail-row" @touchstart.passive="startMessageSwipe($event, message)" @touchend="endMessageSwipe($event, message)" @touchcancel="swipeStart = null" :class="{ selected: selectedId === message.id, unread: message.unread, 'mail-row-danger': mailSenderKind(message) === 'phishing' }">
             <button class="mail-row-open" :title="`Otwórz wiadomość: ${message.subject || '(bez tematu)'}`" :disabled="busy" @click="open(message)"><span class="mail-sender-symbol" :class="'sender-' + mailSenderKind(message)" role="img" :aria-label="senderKinds[mailSenderKind(message)].label" :title="senderKinds[mailSenderKind(message)].hint"><component :is="senderKinds[mailSenderKind(message)].icon" :size="25" :stroke-width="1.7" aria-hidden="true" /></span><span class="mail-row-text"><strong>{{ message.center?.direction === 'outgoing' || folder === 'sent' || folder === 'drafts' ? message.recipient || 'Brak odbiorcy' : message.sender_name }}</strong><span v-if="message.company || message.government" class="mail-row-affiliations"><span v-if="message.company" class="mail-row-company" :title="`Firma: ${message.company.name}`"><Building2 :size="12" /><span>{{ message.company.name }}</span></span><span v-if="message.government" class="mail-row-government" :title="`Domena rządowa: ${message.government.domain} · ${message.government.country}. Autentyczność wiadomości niepotwierdzona.`"><Landmark :size="12" /><span>{{ message.government.suffix }} · {{ message.government.country }}</span></span></span><span>{{ message.subject || '(bez tematu)' }}</span><small>{{ message.content || 'Pusty szkic' }}</small></span></button>
             <div class="mail-row-meta"><span class="mail-source" :class="sourceKind(message)" role="img" :aria-label="messageSources[sourceKind(message)].hint" :title="messageSources[sourceKind(message)].hint"><component :is="messageSources[sourceKind(message)].icon" :size="15" aria-hidden="true" />{{ messageSources[sourceKind(message)].label }}</span><span v-if="mailSenderKind(message) === 'phishing'" class="mail-danger-badge" :title="message.phishing_warning || message.category_reason"><ShieldAlert :size="13" />Niebezpieczna</span><span v-if="message.category" class="mail-category" :class="message.category" :title="message.category_reason || categories[message.category]">{{ categories[message.category] }}</span><time :datetime="message.created_at">{{ date(message.created_at) }}</time><button v-if="message.folder !== 'drafts' && message.folder !== 'sent' && message.center?.direction !== 'outgoing'" class="mail-icon star" :class="{ starred: message.unread }" :disabled="busy" :aria-label="message.unread ? 'Oznacz jako przeczytaną' : 'Oznacz jako nieprzeczytaną'" :aria-pressed="!!message.unread" @click.stop="run(() => setUnread(message, !message.unread))" :title="message.unread ? 'Nowa wiadomość — oznacz jako przeczytaną' : 'Oznacz jako nieprzeczytaną'"><Star :size="17" /></button><button v-if="isEmailMessage(message)" class="mail-tag mail-row-label" :class="message.label || 'none'" :disabled="busy" :title="`Etykieta: ${labels[message.label] || 'Brak'}`" :aria-label="`Zmień etykietę: ${message.subject || '(bez tematu)'}`" popovertarget="mail-label-options" @click.stop="positionLabelMenu($event, message)">{{ labels[message.label] || 'Brak' }}</button><Paperclip v-if="message.attachments.length" :size="14" /></div>
+            <button v-if="swipeMessageId === message.id && isEmailMessage(message) && message.folder !== 'trash' && !readOnly" class="mail-row-delete" :disabled="busy" :aria-label="`Usuń wiadomość: ${message.subject || '(bez tematu)'}`" @click.stop="deleteMessage(message)"><Trash2 :size="20" /><span>Usuń</span></button>
           </article>
           <div v-if="!filtered.length" class="mail-list-empty"><Inbox :size="35" /><h2>{{ busy ? 'Wczytywanie poczty…' : 'Brak wiadomości' }}</h2><p>{{ messages.length ? 'Zmień folder, filtr lub wyszukiwanie.' : 'Importuj wiadomość .eml lub napisz pierwszego maila.' }}</p><button v-if="!messages.length" :disabled="busy" title="Importuj plik EML z załącznikami" @click="importInput.click()"><Upload :size="16" /> Importuj .eml</button></div>
         </div>
@@ -453,7 +487,7 @@ onMounted(async () => { await run(async () => { if (readOnly.value) { await load
             </div>
           </template>
           <template v-else>
-          <div class="mail-reader-toolbar"><button class="mobile-back mail-icon" aria-label="Wróć do listy" @click="selectedId = null" title="Wróć do listy"><ChevronLeft :size="18" /></button><button :disabled="busy" title="Odpowiedz nadawcy wiadomości" @click="compose(selected, 'reply')"><Reply :size="17" /> Odpowiedz</button><button :disabled="busy" title="Przekaż treść wiadomości innemu odbiorcy" @click="compose(selected, 'forward')"><Forward :size="17" /> Przekaż dalej</button><button v-if="!selected.safe && !selected.company && !selected.spam_protected" class="mail-spam-button" :disabled="busy || !selected.sender_email" :title="selected.blocked ? 'Zezwól na nowe wiadomości od tego adresu' : 'Przenieś korespondencję od tego adresu do Spamu i blokuj kolejne wiadomości'" @click="spamSender"><ShieldAlert :size="17" />{{ selected.blocked ? 'Usuń ze spamu' : 'SPAM' }}</button><button :disabled="busy" aria-label="Przenieś do śmieci" @click="run(() => patch(selected, { folder: 'trash' }))" title="Przenieś do śmieci"><Trash2 :size="17" /></button><button :disabled="busy" aria-label="Archiwizuj" @click="run(() => patch(selected, { folder: 'archive' }))" title="Archiwizuj"><Archive :size="17" /></button><button v-if="!isSpamMessage(selected) && !['sent', 'drafts'].includes(selected.folder) && selected.center?.direction !== 'outgoing'" class="mail-task-add" :disabled="busy" aria-label="Dodaj zadanie" title="Dodaj zadanie z tej wiadomości" @click="taskMessage = selected"><ClipboardPlus :size="18" /></button></div>
+          <div class="mail-reader-toolbar"><button class="mobile-back mail-icon" aria-label="Wróć do listy" @click="selectedId = null" title="Wróć do listy"><ChevronLeft :size="18" /></button><button :disabled="busy" title="Odpowiedz nadawcy wiadomości" @click="compose(selected, 'reply')"><Reply :size="17" /> Odpowiedz</button><button :disabled="busy" title="Przekaż treść wiadomości innemu odbiorcy" @click="compose(selected, 'forward')"><Forward :size="17" /> Przekaż dalej</button><button v-if="!selected.safe && !selected.company && !selected.spam_protected" class="mail-spam-button" :disabled="busy || !selected.sender_email" :title="selected.blocked ? 'Zezwól na nowe wiadomości od tego adresu' : 'Przenieś korespondencję od tego adresu do Spamu i blokuj kolejne wiadomości'" @click="spamSender"><ShieldAlert :size="17" />{{ selected.blocked ? 'Usuń ze spamu' : 'SPAM' }}</button><button :disabled="busy" aria-label="Przenieś do śmieci" @click="deleteMessage(selected)" title="Przenieś do śmieci"><Trash2 :size="17" /></button><button :disabled="busy" aria-label="Archiwizuj" @click="run(() => patch(selected, { folder: 'archive' }))" title="Archiwizuj"><Archive :size="17" /></button><button v-if="!isSpamMessage(selected) && !['sent', 'drafts'].includes(selected.folder) && selected.center?.direction !== 'outgoing'" class="mail-task-add" :disabled="busy" aria-label="Dodaj zadanie" title="Dodaj zadanie z tej wiadomości" @click="taskMessage = selected"><ClipboardPlus :size="18" /></button></div>
           <div class="mail-reader-content">
           <p v-if="mailSenderKind(selected) === 'phishing'" class="mail-phishing-warning" role="alert"><ShieldAlert :size="20" /><span><strong>Niebezpieczna wiadomość</strong><br />{{ selected.phishing_warning || selected.category_reason }}</span></p>
           <div class="mail-sender"><span class="mail-avatar tone-0">{{ initials(selected) }}</span><div><small>Od: {{ selected.sender_name }}</small>
@@ -668,4 +702,10 @@ onMounted(async () => { await run(async () => { if (readOnly.value) { await load
 @media(min-width:1251px) { .mail-layout.is-composing { grid-template-columns:minmax(250px,.85fr) minmax(340px,1.4fr) minmax(280px,1fr); } }
 @media(min-width:651px) and (max-width:1250px) { .mail-layout.is-composing { grid-template-columns:minmax(0,1fr) minmax(270px,.65fr); }.is-composing .mail-list-panel { display:none; } }
 @media(max-width:650px) { .mail-layout.is-composing { grid-template-columns:minmax(0,1fr); }.is-composing .mail-side-panel { border-left:0; border-top:1px solid var(--border); }.mail-compose-page .single-compose-body { padding:18px; }.mail-compose-page>footer { position:static; } }
+</style>
+
+<style scoped>
+.mail-row { touch-action:pan-y; }
+.mail-row-delete { display:flex; flex-direction:column; align-items:center; justify-content:center; align-self:stretch; flex-shrink:0; gap:6px; width:68px; min-height:64px; padding:10px 6px; border:0; border-radius:8px; color:#fff; background:var(--theme-danger,#ba253b); font-size:12px; }
+.mail-row-delete:hover { filter:brightness(.92); }
 </style>

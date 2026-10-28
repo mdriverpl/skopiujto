@@ -11,6 +11,93 @@ PAYMENT_LURE = ('Zaktualizuj informacje o swoim koncie. Szanowny Kliencie! '
                 'Aby nadal korzystać z usługi, sprawdź swoje dane i uniknij przerw w świadczeniu usług. '
                 'Zaloguj się na moje konto.')
 
+DEVICE_SUBJECT = ('Transakcja została wstrzymana. Potwierdź urządzenie, '
+                  'z którego logujesz się do bankowości.')
+DEVICE_CONTENT = '* to dół numerem\n**801 36 36 36**.\nPKO\nbzns\nAlert bezpieczeństwa #VY2HSMT0UP'
+
+
+@pytest.mark.parametrize('subject,content', [
+    (DEVICE_SUBJECT, DEVICE_CONTENT),
+    (DEVICE_SUBJECT, ''),
+    ('Potwierdź urządzenie do bankowości internetowej', 'Komunikat bezpieczeństwa'),
+    ('Dostęp do konta został zablokowany', 'Zweryfikuj urządzenie do bankowości.'),
+    ('Alert bezpieczeństwa', 'Bankowość internetowa: zatwierdź logowanie.'),
+])
+def test_device_and_banking_access_lures(subject, content):
+    assert mail_rules.phishing_reason(subject, content).startswith('Podejrzenie phishingu:')
+
+
+@pytest.mark.parametrize('sender', [
+    'info@soulsantasolomonllc.com', 'info@obca-firma.pl',
+    'info@pkobp.pl.attacker.example', 'info@fakepkobp.pl',
+])
+def test_body_bank_signature_with_device_lure_checks_exact_domain(sender):
+    reason = mail_rules.bank_impersonation_reason(sender, 'Konto — Pomoc techniczna',
+                                                 DEVICE_SUBJECT, DEVICE_CONTENT)
+    assert sender.split('@')[1] in reason
+
+
+@pytest.mark.parametrize('sender', ['info@pkobp.pl', 'info@alerts.pkobp.pl'])
+def test_official_domain_is_not_a_bank_identity_mismatch(sender):
+    assert not mail_rules.bank_impersonation_reason(sender, 'Konto', DEVICE_SUBJECT, DEVICE_CONTENT)
+
+
+@pytest.mark.parametrize('subject,content', [
+    ('Potwierdzenie przelewu do PKO', 'Przelew został wysłany.'),
+    ('Transakcja została wstrzymana', 'Skontaktuj się ze swoim bankiem.'),
+    ('Potwierdź urządzenie do prezentacji', 'Laptop jest gotowy.'),
+    ('Materiały edukacyjne', DEVICE_SUBJECT + DEVICE_CONTENT),
+    ('Ostrzeżenie przed phishingiem', DEVICE_SUBJECT + DEVICE_CONTENT),
+    ('Faktura za usługi', 'Nasz rachunek prowadzony jest w PKO.'),
+])
+def test_banking_mentions_and_education_are_not_device_lures(subject, content):
+    assert not mail_rules.spam_reason(subject, content, 'biuro@example.com', 'Jan Kowalski')
+
+
+@pytest.mark.parametrize('sender,name,subject,content,expected', [
+    ('info@soulsantasolomonllc.com', 'Konto', DEVICE_SUBJECT, DEVICE_CONTENT, 'spam'),
+    ('info@obca-firma.pl', 'Konto', DEVICE_SUBJECT, DEVICE_CONTENT, 'spam'),
+    ('info@obca-firma.pl', 'PKO Bank Polski', 'Informacja', 'Komunikat', 'spam'),
+    ('biuro@example.com', 'Jan Kowalski', 'Faktura za usługi', 'Przesyłam fakturę.', 'inbox'),
+    ('biuro@example.pl', 'Jan Kowalski', 'Przelew do PKO', 'Przesyłam potwierdzenie.', 'inbox'),
+])
+def test_incoming_routing_uses_banking_signals_not_tld(monkeypatch, sender, name, subject, content, expected):
+    monkeypatch.setattr(mail_rules, 'context', lambda con, user_id: ({}, set(), set()))
+    assert mail_rules.apply_incoming(None, 'user', sender, subject, content, name) == expected
+
+
+def test_device_lure_import_scan_and_warning_for_existing_spam(app_client):
+    main, client = app_client
+    row = promotion(client, 'Konto — Pomoc techniczna <info@soulsantasolomonllc.com>',
+                    DEVICE_SUBJECT, DEVICE_CONTENT)
+    assert row['folder'] == 'spam'
+    assert row['category_reason'].startswith('Podejrzenie phishingu:')
+    assert 'soulsantasolomonllc.com' in row['phishing_warning']
+    # Previously imported inbox messages must be moved by the spam scan.
+    with main.db() as con:
+        con.execute("UPDATE client_mail SET folder='inbox',category='',category_source='',category_reason='' WHERE id=?", (row['id'],))
+    assert client.post('/api/client-mail/spam-scan').json()['moved'] == 1
+    listed = next(item for item in client.get('/api/client-mail').json() if item['id'] == row['id'])
+    assert listed['folder'] == 'spam' and listed['phishing_warning']
+
+
+def test_bank_sender_mismatch_also_routes_mail_to_spam(app_client):
+    _, client = app_client
+    row = promotion(client, 'PKO Bank Polski <info@obca-firma.pl>', 'Informacja', 'Komunikat')
+    assert row['folder'] == 'spam'
+    assert row['category_reason'].startswith('Podejrzenie phishingu:')
+
+
+def test_inbox_listing_excludes_spam_and_other_folders(app_client):
+    main, client = app_client
+    inbox = promotion(client, 'biuro@example.com', 'Zwykła wiadomość', 'Dzień dobry.')
+    spam = promotion(client, 'Konto <info@obca-firma.pl>', DEVICE_SUBJECT, DEVICE_CONTENT)
+    archive = promotion(client, 'biuro@example.com', 'Do archiwum', 'Dzień dobry.')
+    client.patch('/api/client-mail/' + archive['id'], json={'version': archive['version'], 'folder': 'archive'})
+    assert {row['id'] for row in client.get('/api/client-mail?folder=inbox').json()} == {inbox['id']}
+    assert {row['id'] for row in client.get('/api/client-mail?folder=spam').json()} == {spam['id']}
+    assert len(client.get('/api/client-mail').json()) == 3
+
 
 @pytest.mark.parametrize('sender,name,subject,expected', [
     ('webmaster@72c9eed974.nxcli.io', 'iPKO biznes',

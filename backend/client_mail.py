@@ -142,7 +142,7 @@ def install(app, db, user, now, owned_document=None):
         result['phishing_warning'] = ''
         if row['folder'] not in ('sent', 'drafts'):
             result['phishing_warning'] = mail_rules.bank_impersonation_reason(
-                row['sender_email'], row['sender_name'], row['subject']) or (
+                row['sender_email'], row['sender_name'], row['subject'], row['content']) or (
                 mail_rules.phishing_reason(row['subject'], row['content'])
                 if result['government'] or not result['safe'] else '')
         result['attachments_blocked'] = row['folder'] == 'spam' or row['category'] == 'spam'
@@ -159,17 +159,24 @@ def install(app, db, user, now, owned_document=None):
         if row['version'] != version: raise HTTPException(409, 'Wiadomość została zmieniona. Odśwież pocztę.')
 
     @app.get('/api/client-mail')
-    def listing(hours: int | None = Query(default=None), include_id: str | None = Query(default=None, max_length=64), current=Depends(user)):
+    def listing(hours: int | None = Query(default=None), include_id: str | None = Query(default=None, max_length=64),
+                folder: Literal['inbox', 'sent', 'drafts', 'archive', 'spam', 'trash'] | None = None, current=Depends(user)):
         if hours is not None and hours not in mail_sync.ALLOWED_HOURS:
             raise HTTPException(422, 'Wybierz zakres: 24 h, 48 h, 7 dni lub 30 dni.')
         with db() as con:
             rules_context = mail_rules.context(con, current['id'])
+            scope = ''
+            scope_params = ()
+            if folder is not None:
+                scope = ' AND folder=?'
+                scope_params = (folder,)
+                if folder == 'inbox': scope += " AND category!='spam'"
             if hours is None:
-                rows = con.execute('SELECT * FROM client_mail WHERE user_id=? ORDER BY created_at DESC,id', (current['id'],)).fetchall()
+                rows = con.execute('SELECT * FROM client_mail WHERE user_id=?' + scope + ' ORDER BY created_at DESC,id', (current['id'], *scope_params)).fetchall()
             else:
                 cutoff = mail_sync.utc_now() - timedelta(hours=hours)
-                candidates = con.execute('''SELECT * FROM client_mail WHERE user_id=? AND (created_at>=? OR id=?)
-                    ORDER BY created_at DESC,id''', (current['id'], (cutoff - timedelta(days=1)).date().isoformat(), include_id)).fetchall()
+                candidates = con.execute('SELECT * FROM client_mail WHERE user_id=?' + scope + ''' AND (created_at>=? OR id=?)
+                    ORDER BY created_at DESC,id''', (current['id'], *scope_params, (cutoff - timedelta(days=1)).date().isoformat(), include_id)).fetchall()
                 rows = []
                 for row in candidates:
                     if row['id'] == include_id: rows.append(row); continue
@@ -302,7 +309,7 @@ def install(app, db, user, now, owned_document=None):
         identifier = secrets.token_hex(16)
         with db() as con:
             con.begin_write()
-            incoming_folder = mail_rules.apply_incoming(con, current['id'], parsed['sender_email'], parsed['subject'], parsed['content'])
+            incoming_folder = mail_rules.apply_incoming(con, current['id'], parsed['sender_email'], parsed['subject'], parsed['content'], parsed['sender_name'])
             con.execute('''INSERT INTO client_mail(id,user_id,sender_name,sender_email,recipient,subject,content,folder,unread,created_at)
                 VALUES(?,?,?,?,?,?,?,?,1,?)''', (identifier, current['id'], parsed['sender_name'],
                 parsed['sender_email'], parsed['recipient'], parsed['subject'], parsed['content'], incoming_folder, parsed['timestamp'] or now()))

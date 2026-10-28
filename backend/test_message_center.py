@@ -49,6 +49,16 @@ def test_combines_all_channels_both_directions_without_duplicate_internal_dispat
     assert next(item for item in data['items'] if item['id'] == 'internal:out')['reply_to'] is None
 
 
+def test_mailbox_can_skip_native_email_history_without_hiding_other_channels(app_client):
+    main, client = app_client
+    seed(main, client)
+    data = client.get('/api/message-center?include_native_email=false').json()
+    assert data['total'] == 5
+    assert not any(item['source'] == 'email' for item in data['items'])
+    assert data['counts'] == {'email': 1, 'user': 2, 'sms': 1, 'edelivery': 1}
+    assert client.get('/api/message-center').json()['total'] == 7
+
+
 def test_spam_is_excluded_from_received_items_and_counts_but_remains_in_mailbox(app_client):
     main, client = app_client
     owner, _ = seed(main, client)

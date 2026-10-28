@@ -103,7 +103,7 @@ def receive(db, current, config, parse_message, now, hours=24):
                                (current['id'], account, uid_validity, uid.decode())).fetchone():
                     continue
                 identifier = secrets.token_hex(16)
-                incoming_folder = mail_rules.apply_incoming(con, current['id'], parsed['sender_email'], parsed['subject'], parsed['content'])
+                incoming_folder = mail_rules.apply_incoming(con, current['id'], parsed['sender_email'], parsed['subject'], parsed['content'], parsed['sender_name'])
                 con.execute('''INSERT INTO client_mail(id,user_id,sender_name,sender_email,recipient,subject,content,folder,unread,created_at)
                     VALUES(?,?,?,?,?,?,?,?,?,?)''', (identifier, current['id'], parsed['sender_name'],
                     parsed['sender_email'], parsed['recipient'], parsed['subject'], parsed['content'], incoming_folder,

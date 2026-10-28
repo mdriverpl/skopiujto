@@ -10,10 +10,11 @@ import { loadUnifiedMail, isEmailMessage, isSpamMessage, isReceivedMessage, sour
 
 const compiled = compileScript(parse(readFileSync(new URL('./ClientMail.vue', import.meta.url), 'utf8')).descriptor,
   { id: 'mail-test' }).content.replace(/^import .*$/gm, '').replace('export default', 'globalThis.component =')
-function panel(api, overrides = {}, emit = () => {}, fetcher = globalThis.fetch, localStorage) {
+function panel(api, overrides = {}, emit = () => {}, fetcher = globalThis.fetch, localStorage, mobile = false) {
   const mounted = []
   const context = { attachmentSelection, hasAttachmentChanges, saveAttachmentSelection, downloadMailArchive, FormData, ComposeAttachments: {}, mailSenderKind, loadUnifiedMail, isEmailMessage, isSpamMessage, isReceivedMessage, sourceKind, computed, ref, watch, localStorage, onMounted(callback) { mounted.push(callback) }, FormData, fetch: fetcher, MailSettings: {}, MailTaskDialog: {}, MessageChannelTabs: {}, ChannelMessageDialog: {} }
   for (const icon of ['ClipboardPlus', 'Mail', 'Users', 'MessageSquare', 'Inbox', 'Send', 'FileText', 'Archive', 'ShieldAlert', 'Trash2', 'Handshake', 'Landmark', 'UserRound', 'Megaphone', 'Bell', 'Ban']) context[icon] = {}
+  context.matchMedia = () => ({ matches: mobile })
   runInNewContext(compiled, context)
   const state = context.component.setup(reactive({ api, ...overrides }), { expose() {}, emit })
   state.mount = async () => { for (const callback of mounted) await callback() }
@@ -22,6 +23,66 @@ function panel(api, overrides = {}, emit = () => {}, fetcher = globalThis.fetch,
 const message = { id: 'one', folder: 'inbox', sender_name: 'Jan Kowalski', sender_email: 'jan@example.com',
   recipient: 'ja@example.com', subject: 'Oferta', content: 'Warunki współpracy', unread: 1, label: 'urgent',
   version: 1, created_at: '2026-10-13T10:00:00Z', attachments: [{ id: 'a', name: 'Oferta.pdf' }] }
+
+test('sending a reply preserves the current folder and message', async () => {
+  const events = []
+  const state = panel(async (path, method, body) => ({ ...message, ...body,
+    id: 'draft', folder: path.endsWith('/send') ? 'sent' : 'drafts', attachments: [] }), {}, (...args) => events.push(args))
+  state.messages.value = [{ ...message }]
+  state.selectedId.value = message.id
+  state.compose(message, 'reply')
+  await state.send()
+  assert.equal(state.folder.value, 'inbox')
+  assert.equal(state.selectedId.value, message.id)
+  assert.equal(state.composer.value, null)
+  assert.equal(state.messages.value.find(item => item.id === 'draft').folder, 'sent')
+  assert.equal(events.some(([name]) => name === 'folder-change'), false)
+})
+
+for (const mobile of [false, true]) test(`deleting returns to ${mobile ? 'the mobile list' : 'the first visible desktop message'}`, async () => {
+  const state = panel(async (path, method, body) => ({ ...message, ...body, version: 2 }), {}, () => {}, globalThis.fetch, undefined, mobile)
+  const first = { ...message, id: 'first', unread: false, created_at: '2026-10-14T10:00:00Z' }
+  state.messages.value = [first, { ...message }]
+  state.selectedId.value = message.id
+  await state.deleteMessage(state.selected.value)
+  assert.equal(state.selectedId.value, mobile ? null : 'first')
+  assert.equal(state.filtered.value.length, 1)
+  assert.equal(state.folder.value, 'inbox')
+})
+
+test('deleting the last message clears selection; failed deletion preserves the message', async () => {
+  const state = panel(async (path, method, body) => ({ ...message, ...body }))
+  state.messages.value = [{ ...message }]; state.selectedId.value = message.id
+  await state.deleteMessage(state.selected.value)
+  assert.equal(state.selectedId.value, null)
+  assert.equal(state.filtered.value.length, 0)
+  const failed = panel(async () => { throw new Error('Delete failed') })
+  failed.messages.value = [{ ...message }]; failed.selectedId.value = message.id
+  await failed.deleteMessage(failed.selected.value)
+  assert.equal(failed.selectedId.value, message.id)
+  assert.equal(failed.filtered.value.length, 1)
+  assert.equal(failed.error.value, 'Delete failed')
+})
+
+test('left swipe reveals delete, right swipe closes it, and vertical scrolling does neither', () => {
+  const state = panel(async () => { throw new Error('Swipe must not call API') })
+  let prevented = false
+  const start = () => state.startMessageSwipe({ touches: [{ clientX: 180, clientY: 80 }] }, message)
+  const end = (x, y) => state.endMessageSwipe({ changedTouches: [{ clientX: x, clientY: y }], cancelable: true,
+    preventDefault() { prevented = true } }, message)
+  start(); end(70, 85)
+  assert.equal(state.swipeMessageId.value, message.id)
+  assert.equal(prevented, true)
+  start(); end(270, 85)
+  assert.equal(state.swipeMessageId.value, null)
+  prevented = false
+  start(); end(110, 300)
+  assert.equal(state.swipeMessageId.value, null)
+  assert.equal(prevented, false)
+  state.startMessageSwipe({ touches: [{ clientX: 180, clientY: 80 }] }, { ...message, folder: 'trash' })
+  end(70, 85)
+  assert.equal(state.swipeMessageId.value, null)
+})
 
 test('failed SMTP keeps uploaded attachments and ZIP settings in the saved draft for retry', async () => {
   const calls = []
@@ -69,9 +130,8 @@ test('restored mailbox loads all sources and opens portal messages without email
   const calls = []
   const state = panel(async (path, method) => {
     calls.push([path, method])
-    if (path === '/client-mail') return [message]
-    if (path.startsWith('/message-center?')) return { total: 2, items: [
-      { id: 'email:one', source: 'email', source_id: 'one', channel: 'email' },
+    if (path === '/client-mail?folder=inbox') return [message]
+    if (path.startsWith('/message-center?')) return { total: 1, items: [
       { id: 'internal:portal', source: 'internal', source_id: 'portal', channel: 'user', title: 'Przez portal',
         sender: 'Anna', recipient: 'Jan', unread: true, created_at: '2000-01-01T12:00:00Z' }
     ] }

@@ -96,11 +96,11 @@ def normalized_text(value):
     return re.sub(r'\s+', ' ', ''.join(c for c in value if not unicodedata.combining(c))).strip()
 
 
-def bank_impersonation_reason(sender_email, sender_name, subject):
+def bank_impersonation_reason(sender_email, sender_name, subject, content=''):
     """Flag a claimed bank identity on an unrelated sender domain.
 
     Domain matching is only a mismatch check, never proof of authenticity.
-    A mention in ordinary correspondence or the body alone is insufficient.
+    A body signature requires an actionable banking lure in the subject.
     """
     brand = r'\b(?:ipko|pko(?:\s+bp)?|pko\s+bank\s+polski)\b'
     claimed_sender = re.search(brand, normalized_text(sender_name))
@@ -108,7 +108,8 @@ def bank_impersonation_reason(sender_email, sender_name, subject):
     bank_action = re.search(brand, subject) and re.search(
         r'\b(?:zaktualizuj|aktualizacj\w*|zweryfikuj|weryfikacj\w*|'
         r'potwierdz|zablokowan\w*|zawieszon\w*|wymagane|piln\w*)\b', subject)
-    if not (claimed_sender or bank_action):
+    body_claim = re.search(brand, normalized_text(content)[:100000]) and banking_lure(subject)
+    if not (claimed_sender or bank_action or body_claim):
         return ''
     domain = parseaddr(sender_email or '')[1].rsplit('@', 1)[-1].casefold().rstrip('.')
     if any(domain == allowed or domain.endswith('.' + allowed)
@@ -119,10 +120,26 @@ def bank_impersonation_reason(sender_email, sender_name, subject):
             'Nie klikaj linków, nie otwieraj załączników i nie podawaj danych logowania.')
 
 
+def banking_lure(text):
+    """Require a banking context and a request to authorize a device or login."""
+    bank = re.search(r'\b(?:bankow\w*|ipko|pko|banku|bankiem)\b', text)
+    request = re.search(r'\b(?:potwierdz|zweryfikuj|zatwierdz|autoryzuj|aktywuj|'
+                        r'zaktualizuj)\b.{0,90}\b(?:urzadzeni\w*|logowani\w*|dostep\w*)\b', text)
+    return bool(bank and request)
+
+
 def phishing_reason(subject, content):
     """Detect combined account/payment lures; never trust or block a TLD alone."""
     subject = normalized_text(subject)
     text = normalized_text(content)[:100000]
+    # A lure can be entirely in the subject, even without a URL in the body.
+    # Only use body requests when the subject also announces a banking alert.
+    bank_alert = re.search(r'\b(?:transakcj\w*|przelew\w*|dostep\w*|konto)\b.{0,50}'
+                           r'\b(?:wstrzyman\w*|zablokowan\w*|zawieszon\w*)\b|'
+                           r'\balert bezpieczenstwa\b', subject)
+    if banking_lure(subject) or (bank_alert and banking_lure(text)):
+        return ('Podejrzenie phishingu: żądanie potwierdzenia urządzenia, logowania '
+                'lub dostępu do bankowości w wiadomości e-mail.')
     # Warnings and normal invoices alone are not credential requests. Require
     # an actionable subject and matching requests in the actual message body.
     update = re.search(r'\b(zaktualizuj|aktualizacj\w*|zweryfikuj|weryfikacj\w*|'
@@ -146,9 +163,10 @@ def phishing_reason(subject, content):
     return ''
 
 
-def spam_reason(subject, content):
+def spam_reason(subject, content, sender_email='', sender_name=''):
     # Phishing checks precede marketing exemptions for invoices and payments.
-    return phishing_reason(subject, content) or promotional_reason(subject, content)
+    return (bank_impersonation_reason(sender_email, sender_name, subject, content)
+            if sender_email else '') or phishing_reason(subject, content) or promotional_reason(subject, content)
 
 
 def invoice_reason(subject):
@@ -226,11 +244,11 @@ def promotional_reason(subject, content):
     return ''
 
 
-def apply_incoming(con, user_id, sender, subject='', content=''):
+def apply_incoming(con, user_id, sender, subject='', content='', sender_name=''):
     status = classify(sender, context(con, user_id))
     if status['blocked']: return 'spam'
     if status['spam_protected']: return 'inbox'
-    return 'spam' if spam_reason(subject, content) else 'inbox'
+    return 'spam' if spam_reason(subject, content, sender, sender_name) else 'inbox'
 
 
 def scan_inbox(con, user_id, cutoff=None):
@@ -252,12 +270,13 @@ def scan_inbox(con, user_id, cutoff=None):
         status = classify(row['sender_email'], rules_context)
         if status['spam_protected'] or row['category_source'] == 'manual': continue
         reason = ('Adres nadawcy na Twojej liście spamu.' if status['blocked'] else
-                  spam_reason(row['subject'], row['content']))
+                  spam_reason(row['subject'], row['content'], row['sender_email'], row['sender_name']))
         if not reason: continue
         con.execute("""UPDATE client_mail SET folder='spam',category='spam',category_source='local',
             category_reason=?,version=version+1 WHERE id=?""", (reason, row['id']))
         moved += 1
-    for row in con.execute("SELECT * FROM client_mail WHERE user_id=? AND folder IN ('inbox','archive')", (user_id,)).fetchall():
+    for row in con.execute("""SELECT id,user_id,folder,subject,category,category_source,label,label_source
+                            FROM client_mail WHERE user_id=? AND folder IN ('inbox','archive')""", (user_id,)).fetchall():
         mark_invoice(con, row, bump_version=True)
     return moved
 
@@ -282,7 +301,7 @@ def mark_incoming(con, identifier, user_id):
         return
     status = classify(row['sender_email'], context(con, user_id))
     reason = ('Adres nadawcy na Twojej liście spamu.' if status['blocked'] else
-              spam_reason(row['subject'], row['content']))
+              spam_reason(row['subject'], row['content'], row['sender_email'], row['sender_name']))
     if reason:
         con.execute("UPDATE client_mail SET category='spam',category_source='local',category_reason=? WHERE id=?",
                     (reason, identifier))

@@ -20,7 +20,7 @@ class ReadState(BaseModel):
     unread: StrictBool
 
 
-def collect(con, current):
+def collect(con, current, include_native_email=True):
     rows = []
 
     def add(source, identifier, channel, direction, title, content, sender, recipient, created_at, **extra):
@@ -30,7 +30,7 @@ def collect(con, current):
                      'status': '', 'unread': False, **extra})
 
     for row in con.execute('''SELECT id,sender_name,sender_email,recipient,subject,content,folder,unread,created_at
-                              FROM client_mail WHERE user_id=? AND folder!='spam' AND category!='spam' ''', (current['id'],)):
+                              FROM client_mail WHERE user_id=? AND folder!='spam' AND category!='spam' ''', (current['id'],)) if include_native_email else ():
         outgoing = row['folder'] in ('sent', 'drafts')
         unread = bool(row['unread'] and not outgoing)
         status = row['folder'] if row['folder'] in ('drafts', 'spam', 'trash') else ('sent' if outgoing else 'unread' if unread else 'read')
@@ -124,9 +124,10 @@ def install(app, db, user):
                 direction: Literal['all', 'incoming', 'outgoing'] = 'all',
                 search: str = Query(default='', max_length=200),
                 offset: int = Query(default=0, ge=0), limit: int = Query(default=40, ge=1, le=100),
+                include_native_email: bool = True,
                 current=Depends(user)):
         with db() as con:
-            rows = collect(con, current)
+            rows = collect(con, current, include_native_email=include_native_email)
         counts = dict(Counter(item['channel'] for item in rows))
         query = search.strip().casefold()
         filtered = [item for item in rows if (channel == 'all' or item['channel'] == channel)
